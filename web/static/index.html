@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenTrail - Log Viewer</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1 class="title">OpenTrail</h1>
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-indicator" id="statusIndicator"></span>
+                <span class="status-text" id="statusText">Connecting...</span>
+            </div>
+        </header>
+        
+        <main class="main">
+            <div class="terminal-container">
+                <div class="terminal-header">
+                    <div class="terminal-controls">
+                        <span class="control-dot red"></span>
+                        <span class="control-dot yellow"></span>
+                        <span class="control-dot green"></span>
+                    </div>
+                    <div class="terminal-title">Log Stream</div>
+                </div>
+                
+                <div class="terminal-content" id="terminal">
+                    <div class="log-container" id="logContainer">
+                        <div class="welcome-message">
+                            <div class="log-entry">
+                                <span class="timestamp" id="welcomeTimestamp">Loading...</span>
+                                <span class="level info">INFO</span>
+                                <span class="tracking-id">system</span>
+                                <span class="message">OpenTrail log viewer initialized. Waiting for log entries...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="scroll-indicator" id="scrollIndicator">
+                    <button class="scroll-to-bottom" id="scrollToBottom">
+                        ↓ Scroll to bottom to resume auto-scroll
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <script src="/static/app.js"></script>
+</body>
+</html>
