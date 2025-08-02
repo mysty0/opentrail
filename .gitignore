@@ -1,2 +1,8 @@
 *.db
 *.exe
+
+# Node.js dependencies and build artifacts
+web/static/node_modules/
+web/static/dist/
+web/static/package-lock.json
+web/static/.vite/

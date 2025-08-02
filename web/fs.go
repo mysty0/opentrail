@@ -14,10 +14,10 @@ var staticFS embed.FS
 var StaticFS fs.FS
 
 func init() {
-	// Use fs.Sub to mount the static directory at the root level
+	// Use fs.Sub to mount the static/dist directory at the root level
 	// This ensures consistent behavior between embedded and filesystem modes
 	var err error
-	StaticFS, err = fs.Sub(staticFS, "static")
+	StaticFS, err = fs.Sub(staticFS, "static/dist")
 	if err != nil {
 		panic("failed to create static filesystem: " + err.Error())
 	}
