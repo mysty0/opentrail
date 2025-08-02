@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -341,6 +342,303 @@ func TestNormalizeLevel(t *testing.T) {
 			got := normalizeLevel(tt.input)
 			if got != tt.want {
 				t.Errorf("normalizeLevel(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewRFC3164LogParser(t *testing.T) {
+	parser := NewRFC3164LogParser()
+	if parser == nil {
+		t.Fatal("NewRFC3164LogParser returned nil")
+	}
+}
+
+func TestRFC3164LogParser_Parse(t *testing.T) {
+	parser := NewRFC3164LogParser()
+	
+	tests := []struct {
+		name        string
+		rawMessage  string
+		wantLevel   string
+		wantTrackingID string
+		wantMessage string
+		wantErr     bool
+	}{
+		{
+			name:           "valid RFC 3164 message",
+			rawMessage:     "<34>Jan 23 14:30:45 myhost myapp: Application started successfully",
+			wantLevel:      "CRITICAL",
+			wantTrackingID: "myhost:myapp",
+			wantMessage:    "Application started successfully",
+			wantErr:        false,
+		},
+		{
+			name:           "RFC 3164 without tag",
+			rawMessage:     "<14>Jan 23 14:30:45 myhost System shutdown initiated",
+			wantLevel:      "INFO",
+			wantTrackingID: "myhost",
+			wantMessage:    "System shutdown initiated",
+			wantErr:        false,
+		},
+		{
+			name:           "RFC 3164 with different PRI",
+			rawMessage:     "<187>Jan 23 14:30:45 server01 kernel: Out of memory error",
+			wantLevel:      "ERROR",
+			wantTrackingID: "server01:kernel",
+			wantMessage:    "Out of memory error",
+			wantErr:        false,
+		},
+		{
+			name:           "RFC 3164 debug level",
+			rawMessage:     "<191>Jan 23 14:30:45 localhost app: Debug message here",
+			wantLevel:      "DEBUG",
+			wantTrackingID: "localhost:app",
+			wantMessage:    "Debug message here",
+			wantErr:        false,
+		},
+		{
+			name:           "RFC 3164 warning level",
+			rawMessage:     "<188>Jan 23 14:30:45 webserver nginx: Warning: high memory usage",
+			wantLevel:      "WARNING",
+			wantTrackingID: "webserver:nginx",
+			wantMessage:    "Warning: high memory usage",
+			wantErr:        false,
+		},
+		{
+			name:           "RFC 3164 single digit day",
+			rawMessage:     "<13>Feb  5 09:15:30 client01 sshd: Failed login attempt",
+			wantLevel:      "NOTICE",
+			wantTrackingID: "client01:sshd",
+			wantMessage:    "Failed login attempt",
+			wantErr:        false,
+		},
+		{
+			name:           "malformed RFC 3164",
+			rawMessage:     "This is not a syslog message",
+			wantLevel:      "UNKNOWN",
+			wantTrackingID: "",
+			wantMessage:    "This is not a syslog message",
+			wantErr:        false,
+		},
+		{
+			name:           "empty message",
+			rawMessage:     "",
+			wantLevel:      "",
+			wantTrackingID: "",
+			wantMessage:    "",
+			wantErr:        true,
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry, err := parser.Parse(tt.rawMessage)
+			
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Parse() expected error but got none")
+				}
+				return
+			}
+			
+			if err != nil {
+				t.Errorf("Parse() unexpected error = %v", err)
+				return
+			}
+			
+			if entry.Level != tt.wantLevel {
+				t.Errorf("Parse() level = %v, want %v", entry.Level, tt.wantLevel)
+			}
+			
+			if entry.TrackingID != tt.wantTrackingID {
+				t.Errorf("Parse() tracking_id = %v, want %v", entry.TrackingID, tt.wantTrackingID)
+			}
+			
+			if entry.Message != tt.wantMessage {
+				t.Errorf("Parse() message = %v, want %v", entry.Message, tt.wantMessage)
+			}
+			
+			if entry.Timestamp.IsZero() {
+				t.Errorf("Parse() timestamp should not be zero")
+			}
+		})
+	}
+}
+
+func TestRFC3164LogParser_SetFormat(t *testing.T) {
+	parser := NewRFC3164LogParser()
+	
+	// RFC 3164 parser should ignore SetFormat calls
+	err := parser.SetFormat("{{timestamp}} {{level}} {{message}}")
+	if err != nil {
+		t.Errorf("SetFormat() returned error: %v", err)
+	}
+}
+
+func TestRFC3164LogParser_priToSeverity(t *testing.T) {
+	parser := &RFC3164LogParser{}
+	
+	tests := []struct {
+		pri  int
+		want string
+	}{
+		{0, "EMERGENCY"},
+		{1, "ALERT"},
+		{2, "CRITICAL"},
+		{3, "ERROR"},
+		{4, "WARNING"},
+		{5, "NOTICE"},
+		{6, "INFO"},
+		{7, "DEBUG"},
+		{8, "EMERGENCY"}, // Facility 1, Severity 0
+		{15, "DEBUG"},    // Facility 1, Severity 7
+		{16, "EMERGENCY"}, // Facility 2, Severity 0
+		{23, "DEBUG"},     // Facility 2, Severity 7
+		{34, "CRITICAL"},  // Facility 4, Severity 2
+		{189, "NOTICE"},   // Facility 23, Severity 5
+		{191, "DEBUG"},    // Facility 23, Severity 7
+	}
+	
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("pri_%d", tt.pri), func(t *testing.T) {
+			got := parser.priToSeverity(tt.pri)
+			if got != tt.want {
+				t.Errorf("priToSeverity(%d) = %q, want %q", tt.pri, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRFC3164LogParser_parseRFC3164Parts(t *testing.T) {
+	parser := &RFC3164LogParser{}
+	
+	tests := []struct {
+		name       string
+		message    string
+		wantPri    int
+		wantTS     string
+		wantHost   string
+		wantTag    string
+		wantMsg    string
+		wantErr    bool
+	}{
+		{
+			name:     "valid RFC 3164",
+			message:  "<34>Jan 23 14:30:45 myhost myapp: Application started",
+			wantPri:  34,
+			wantTS:   "Jan 23 14:30:45",
+			wantHost: "myhost",
+			wantTag:  "myapp",
+			wantMsg:  "Application started",
+			wantErr:  false,
+		},
+		{
+			name:     "no PRI",
+			message:  "Jan 23 14:30:45 myhost message",
+			wantPri:  0,
+			wantTS:   "",
+			wantHost: "",
+			wantTag:  "",
+			wantMsg:  "Jan 23 14:30:45 myhost message",
+			wantErr:  true,
+		},
+		{
+			name:     "invalid PRI",
+			message:  "<abc>Jan 23 14:30:45 myhost message",
+			wantPri:  0,
+			wantTS:   "",
+			wantHost: "",
+			wantTag:  "",
+			wantMsg:  "<abc>Jan 23 14:30:45 myhost message",
+			wantErr:  true,
+		},
+		{
+			name:     "missing closing PRI",
+			message:  "<34Jan 23 14:30:45 myhost message",
+			wantPri:  0,
+			wantTS:   "",
+			wantHost: "",
+			wantTag:  "",
+			wantMsg:  "<34Jan 23 14:30:45 myhost message",
+			wantErr:  true,
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pri, ts, host, tag, msg, err := parser.parseRFC3164Parts(tt.message)
+			
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseRFC3164Parts() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			
+			if !tt.wantErr {
+				if pri != tt.wantPri {
+					t.Errorf("parseRFC3164Parts() pri = %d, want %d", pri, tt.wantPri)
+				}
+				if ts != tt.wantTS {
+					t.Errorf("parseRFC3164Parts() timestamp = %q, want %q", ts, tt.wantTS)
+				}
+				if host != tt.wantHost {
+					t.Errorf("parseRFC3164Parts() hostname = %q, want %q", host, tt.wantHost)
+				}
+				if tag != tt.wantTag {
+					t.Errorf("parseRFC3164Parts() tag = %q, want %q", tag, tt.wantTag)
+				}
+				if msg != tt.wantMsg {
+					t.Errorf("parseRFC3164Parts() message = %q, want %q", msg, tt.wantMsg)
+				}
+			}
+		})
+	}
+}
+
+func TestRFC3164LogParser_EdgeCases(t *testing.T) {
+	parser := NewRFC3164LogParser()
+	
+	tests := []struct {
+		name       string
+		rawMessage string
+		wantLevel  string
+	}{
+		{
+			name:       "message with special characters",
+			rawMessage: "<34>Jan 23 14:30:45 host app: Error: connection failed to host:port",
+			wantLevel:  "CRITICAL",
+		},
+		{
+			name:       "message with multiple colons",
+			rawMessage: "<14>Jan 23 14:30:45 server syslog: time:14:30:45: message here",
+			wantLevel:  "INFO",
+		},
+		{
+			name:       "message with empty tag",
+			rawMessage: "<14>Jan 23 14:30:45 host : message without tag",
+			wantLevel:  "INFO",
+		},
+		{
+			name:       "message with very long hostname",
+			rawMessage: "<14>Jan 23 14:30:45 very-long-hostname-with-dashes-and-numbers-12345 app: message",
+			wantLevel:  "INFO",
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry, err := parser.Parse(tt.rawMessage)
+			if err != nil {
+				t.Errorf("Parse() error = %v", err)
+				return
+			}
+			
+			if entry.Level != tt.wantLevel {
+				t.Errorf("Parse() level = %v, want %v", entry.Level, tt.wantLevel)
+			}
+			
+			if entry.Timestamp.IsZero() {
+				t.Errorf("Parse() timestamp should not be zero")
 			}
 		})
 	}

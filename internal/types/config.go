@@ -4,6 +4,7 @@ package types
 type Config struct {
 	TCPPort        int    `json:"tcp_port"`
 	HTTPPort       int    `json:"http_port"`
+	WebSocketPort  int    `json:"websocket_port"`
 	DatabasePath   string `json:"database_path"`
 	LogFormat      string `json:"log_format"`
 	RetentionDays  int    `json:"retention_days"`

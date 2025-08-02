@@ -27,6 +27,9 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if config.HTTPPort != 8080 {
 		t.Errorf("Expected HTTPPort 8080, got %d", config.HTTPPort)
 	}
+	if config.WebSocketPort != 8081 {
+		t.Errorf("Expected WebSocketPort 8081, got %d", config.WebSocketPort)
+	}
 	if config.DatabasePath != "logs.db" {
 		t.Errorf("Expected DatabasePath 'logs.db', got '%s'", config.DatabasePath)
 	}
@@ -57,6 +60,7 @@ func TestLoadConfig_EnvironmentVariables(t *testing.T) {
 	// Set environment variables
 	os.Setenv("OPENTRAIL_TCP_PORT", "9999")
 	os.Setenv("OPENTRAIL_HTTP_PORT", "8888")
+	os.Setenv("OPENTRAIL_WEBSOCKET_PORT", "7777")
 	os.Setenv("OPENTRAIL_DATABASE_PATH", "/tmp/test.db")
 	os.Setenv("OPENTRAIL_LOG_FORMAT", "{{level}}: {{message}}")
 	os.Setenv("OPENTRAIL_RETENTION_DAYS", "60")
@@ -78,6 +82,9 @@ func TestLoadConfig_EnvironmentVariables(t *testing.T) {
 	}
 	if config.HTTPPort != 8888 {
 		t.Errorf("Expected HTTPPort 8888, got %d", config.HTTPPort)
+	}
+	if config.WebSocketPort != 7777 {
+		t.Errorf("Expected WebSocketPort 7777, got %d", config.WebSocketPort)
 	}
 	if config.DatabasePath != "/tmp/test.db" {
 		t.Errorf("Expected DatabasePath '/tmp/test.db', got '%s'", config.DatabasePath)
@@ -106,6 +113,7 @@ func TestValidateConfig_ValidConfig(t *testing.T) {
 	config := &types.Config{
 		TCPPort:        2253,
 		HTTPPort:       8080,
+		WebSocketPort:  8081,
 		DatabasePath:   "logs.db",
 		LogFormat:      "{{timestamp}}|{{level}}|{{message}}",
 		RetentionDays:  30,
@@ -125,6 +133,7 @@ func TestValidateConfig_InvalidTCPPort(t *testing.T) {
 	config := &types.Config{
 		TCPPort:        0,
 		HTTPPort:       8080,
+		WebSocketPort:  8081,
 		DatabasePath:   "logs.db",
 		LogFormat:      "{{message}}",
 		RetentionDays:  30,
@@ -144,6 +153,7 @@ func TestValidateConfig_InvalidHTTPPort(t *testing.T) {
 	config := &types.Config{
 		TCPPort:        2253,
 		HTTPPort:       70000,
+		WebSocketPort:  8081,
 		DatabasePath:   "logs.db",
 		LogFormat:      "{{message}}",
 		RetentionDays:  30,
@@ -163,6 +173,7 @@ func TestValidateConfig_SamePorts(t *testing.T) {
 	config := &types.Config{
 		TCPPort:        8080,
 		HTTPPort:       8080,
+		WebSocketPort:  8081,
 		DatabasePath:   "logs.db",
 		LogFormat:      "{{message}}",
 		RetentionDays:  30,
@@ -182,6 +193,7 @@ func TestValidateConfig_EmptyDatabasePath(t *testing.T) {
 	config := &types.Config{
 		TCPPort:        2253,
 		HTTPPort:       8080,
+		WebSocketPort:  8081,
 		DatabasePath:   "   ",
 		LogFormat:      "{{message}}",
 		RetentionDays:  30,
@@ -201,6 +213,7 @@ func TestValidateConfig_InvalidLogFormat(t *testing.T) {
 	config := &types.Config{
 		TCPPort:        2253,
 		HTTPPort:       8080,
+		WebSocketPort:  8081,
 		DatabasePath:   "logs.db",
 		LogFormat:      "{{timestamp}}|{{level}}",
 		RetentionDays:  30,
@@ -220,6 +233,7 @@ func TestValidateConfig_InvalidRetentionDays(t *testing.T) {
 	config := &types.Config{
 		TCPPort:        2253,
 		HTTPPort:       8080,
+		WebSocketPort:  8081,
 		DatabasePath:   "logs.db",
 		LogFormat:      "{{message}}",
 		RetentionDays:  0,
@@ -239,6 +253,7 @@ func TestValidateConfig_InvalidMaxConnections(t *testing.T) {
 	config := &types.Config{
 		TCPPort:        2253,
 		HTTPPort:       8080,
+		WebSocketPort:  8081,
 		DatabasePath:   "logs.db",
 		LogFormat:      "{{message}}",
 		RetentionDays:  30,
@@ -258,6 +273,7 @@ func TestValidateConfig_AuthEnabledWithoutUsername(t *testing.T) {
 	config := &types.Config{
 		TCPPort:        2253,
 		HTTPPort:       8080,
+		WebSocketPort:  8081,
 		DatabasePath:   "logs.db",
 		LogFormat:      "{{message}}",
 		RetentionDays:  30,
@@ -279,6 +295,7 @@ func TestValidateConfig_AuthEnabledWithoutPassword(t *testing.T) {
 	config := &types.Config{
 		TCPPort:        2253,
 		HTTPPort:       8080,
+		WebSocketPort:  8081,
 		DatabasePath:   "logs.db",
 		LogFormat:      "{{message}}",
 		RetentionDays:  30,
@@ -300,6 +317,7 @@ func TestValidateConfig_AutoEnableAuth(t *testing.T) {
 	config := &types.Config{
 		TCPPort:        2253,
 		HTTPPort:       8080,
+		WebSocketPort:  8081,
 		DatabasePath:   "logs.db",
 		LogFormat:      "{{message}}",
 		RetentionDays:  30,
@@ -407,6 +425,7 @@ func TestLoadConfig_CommandLineFlags(t *testing.T) {
 	// Define flags first (this will be done by LoadConfigWithFlagSet)
 	tcpPort := fs.Int("tcp-port", 2253, "TCP port for log ingestion")
 	httpPort := fs.Int("http-port", 8080, "HTTP port for web interface")
+	webSocketPort := fs.Int("websocket-port", 8081, "WebSocket port for log ingestion")
 	databasePath := fs.String("database-path", "logs.db", "Path to SQLite database file")
 	logFormat := fs.String("log-format", "{{timestamp}}|{{level}}|{{tracking_id}}|{{message}}", "Log parsing format")
 	retentionDays := fs.Int("retention-days", 30, "Number of days to retain logs")
@@ -419,6 +438,7 @@ func TestLoadConfig_CommandLineFlags(t *testing.T) {
 	args := []string{
 		"-tcp-port", "3000",
 		"-http-port", "9000",
+		"-websocket-port", "7777",
 		"-database-path", "/custom/path.db",
 		"-log-format", "{{level}}: {{message}}",
 		"-retention-days", "45",
@@ -437,6 +457,7 @@ func TestLoadConfig_CommandLineFlags(t *testing.T) {
 	config := &types.Config{
 		TCPPort:        getIntFromEnv("OPENTRAIL_TCP_PORT", *tcpPort),
 		HTTPPort:       getIntFromEnv("OPENTRAIL_HTTP_PORT", *httpPort),
+		WebSocketPort:  getIntFromEnv("OPENTRAIL_WEBSOCKET_PORT", *webSocketPort),
 		DatabasePath:   getStringFromEnv("OPENTRAIL_DATABASE_PATH", *databasePath),
 		LogFormat:      getStringFromEnv("OPENTRAIL_LOG_FORMAT", *logFormat),
 		RetentionDays:  getIntFromEnv("OPENTRAIL_RETENTION_DAYS", *retentionDays),
@@ -457,6 +478,9 @@ func TestLoadConfig_CommandLineFlags(t *testing.T) {
 	}
 	if config.HTTPPort != 9000 {
 		t.Errorf("Expected HTTPPort 9000, got %d", config.HTTPPort)
+	}
+	if config.WebSocketPort != 7777 {
+		t.Errorf("Expected WebSocketPort 7777, got %d", config.WebSocketPort)
 	}
 	if config.DatabasePath != "/custom/path.db" {
 		t.Errorf("Expected DatabasePath '/custom/path.db', got '%s'", config.DatabasePath)
@@ -488,11 +512,13 @@ func TestLoadConfig_EnvironmentOverridesFlags(t *testing.T) {
 	// Set environment variables
 	os.Setenv("OPENTRAIL_TCP_PORT", "5555")
 	os.Setenv("OPENTRAIL_HTTP_PORT", "6666")
+	os.Setenv("OPENTRAIL_WEBSOCKET_PORT", "7777")
 	defer clearTestEnvVars()
 
 	// Define flags first
 	tcpPort := fs.Int("tcp-port", 2253, "TCP port for log ingestion")
 	httpPort := fs.Int("http-port", 8080, "HTTP port for web interface")
+	webSocketPort := fs.Int("websocket-port", 8081, "WebSocket port for log ingestion")
 	databasePath := fs.String("database-path", "logs.db", "Path to SQLite database file")
 	logFormat := fs.String("log-format", "{{timestamp}}|{{level}}|{{tracking_id}}|{{message}}", "Log parsing format")
 	retentionDays := fs.Int("retention-days", 30, "Number of days to retain logs")
@@ -516,6 +542,7 @@ func TestLoadConfig_EnvironmentOverridesFlags(t *testing.T) {
 	config := &types.Config{
 		TCPPort:        getIntFromEnv("OPENTRAIL_TCP_PORT", *tcpPort),
 		HTTPPort:       getIntFromEnv("OPENTRAIL_HTTP_PORT", *httpPort),
+		WebSocketPort:  getIntFromEnv("OPENTRAIL_WEBSOCKET_PORT", *webSocketPort),
 		DatabasePath:   getStringFromEnv("OPENTRAIL_DATABASE_PATH", *databasePath),
 		LogFormat:      getStringFromEnv("OPENTRAIL_LOG_FORMAT", *logFormat),
 		RetentionDays:  getIntFromEnv("OPENTRAIL_RETENTION_DAYS", *retentionDays),
@@ -537,6 +564,9 @@ func TestLoadConfig_EnvironmentOverridesFlags(t *testing.T) {
 	if config.HTTPPort != 6666 {
 		t.Errorf("Expected HTTPPort 6666 (from env), got %d", config.HTTPPort)
 	}
+	if config.WebSocketPort != 7777 {
+		t.Errorf("Expected WebSocketPort 7777 (from env), got %d", config.WebSocketPort)
+	}
 }
 
 // Helper functions for tests
@@ -545,6 +575,7 @@ func clearTestEnvVars() {
 	envVars := []string{
 		"OPENTRAIL_TCP_PORT",
 		"OPENTRAIL_HTTP_PORT",
+		"OPENTRAIL_WEBSOCKET_PORT",
 		"OPENTRAIL_DATABASE_PATH",
 		"OPENTRAIL_LOG_FORMAT",
 		"OPENTRAIL_RETENTION_DAYS",

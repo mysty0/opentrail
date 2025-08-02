@@ -24,6 +24,7 @@ func LoadConfigWithFlagSet(fs *flag.FlagSet) (*types.Config, error) {
 	// Define command-line flags with defaults
 	tcpPort := fs.Int("tcp-port", 2253, "TCP port for log ingestion")
 	httpPort := fs.Int("http-port", 8080, "HTTP port for web interface")
+	webSocketPort := fs.Int("websocket-port", 8081, "WebSocket port for log ingestion")
 	databasePath := fs.String("database-path", "logs.db", "Path to SQLite database file")
 	logFormat := fs.String("log-format", "{{timestamp}}|{{level}}|{{tracking_id}}|{{message}}", "Log parsing format")
 	retentionDays := fs.Int("retention-days", 30, "Number of days to retain logs")
@@ -40,6 +41,7 @@ func LoadConfigWithFlagSet(fs *flag.FlagSet) (*types.Config, error) {
 	// Load from environment variables (override flags)
 	config.TCPPort = getIntFromEnv("OPENTRAIL_TCP_PORT", *tcpPort)
 	config.HTTPPort = getIntFromEnv("OPENTRAIL_HTTP_PORT", *httpPort)
+	config.WebSocketPort = getIntFromEnv("OPENTRAIL_WEBSOCKET_PORT", *webSocketPort)
 	config.DatabasePath = getStringFromEnv("OPENTRAIL_DATABASE_PATH", *databasePath)
 	config.LogFormat = getStringFromEnv("OPENTRAIL_LOG_FORMAT", *logFormat)
 	config.RetentionDays = getIntFromEnv("OPENTRAIL_RETENTION_DAYS", *retentionDays)
@@ -65,10 +67,19 @@ func validateConfig(config *types.Config) error {
 	if config.HTTPPort < 1 || config.HTTPPort > 65535 {
 		return fmt.Errorf("http-port must be between 1 and 65535, got %d", config.HTTPPort)
 	}
+	if config.WebSocketPort < 1 || config.WebSocketPort > 65535 {
+		return fmt.Errorf("websocket-port must be between 1 and 65535, got %d", config.WebSocketPort)
+	}
 
 	// Ensure ports are different
 	if config.TCPPort == config.HTTPPort {
 		return fmt.Errorf("tcp-port and http-port cannot be the same (%d)", config.TCPPort)
+	}
+	if config.TCPPort == config.WebSocketPort {
+		return fmt.Errorf("tcp-port and websocket-port cannot be the same (%d)", config.TCPPort)
+	}
+	if config.HTTPPort == config.WebSocketPort {
+		return fmt.Errorf("http-port and websocket-port cannot be the same (%d)", config.HTTPPort)
 	}
 
 	// Validate database path is not empty
