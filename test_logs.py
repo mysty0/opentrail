@@ -13,6 +13,6 @@ port = 2253
 
 s.connect((host, port))
 # Send a thank you message to the client
-s.send('2023-12-01T10:30:00Z|INFO|user123|Application started successfully\n'.encode('utf-8'))
+s.send('<165>1 2023-10-15T14:30:45Z web01 nginx 1234 access [exampleSDID@32473 iut="3" eventSource="Application" eventID="1011"] User login successful\n'.encode('utf-8'))
 # Close the connection
 s.close()

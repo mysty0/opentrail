@@ -17,6 +17,162 @@
         </header>
         
         <main class="main">
+            <!-- Filter Controls -->
+            <div class="filter-panel" id="filterPanel">
+                <div class="filter-header">
+                    <h3>RFC5424 Filters</h3>
+                    <button class="filter-toggle" id="filterToggle">Show Filters</button>
+                </div>
+                <div class="filter-content hidden" id="filterContent">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label for="facilityFilter">Facility:</label>
+                            <select id="facilityFilter">
+                                <option value="">All</option>
+                                <option value="0">Kernel (0)</option>
+                                <option value="1">User (1)</option>
+                                <option value="2">Mail (2)</option>
+                                <option value="3">Daemon (3)</option>
+                                <option value="4">Auth (4)</option>
+                                <option value="5">Syslog (5)</option>
+                                <option value="6">LPR (6)</option>
+                                <option value="7">News (7)</option>
+                                <option value="8">UUCP (8)</option>
+                                <option value="9">Cron (9)</option>
+                                <option value="10">Authpriv (10)</option>
+                                <option value="11">FTP (11)</option>
+                                <option value="16">Local0 (16)</option>
+                                <option value="17">Local1 (17)</option>
+                                <option value="18">Local2 (18)</option>
+                                <option value="19">Local3 (19)</option>
+                                <option value="20">Local4 (20)</option>
+                                <option value="21">Local5 (21)</option>
+                                <option value="22">Local6 (22)</option>
+                                <option value="23">Local7 (23)</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="severityFilter">Severity:</label>
+                            <select id="severityFilter">
+                                <option value="">All</option>
+                                <option value="0">Emergency (0)</option>
+                                <option value="1">Alert (1)</option>
+                                <option value="2">Critical (2)</option>
+                                <option value="3">Error (3)</option>
+                                <option value="4">Warning (4)</option>
+                                <option value="5">Notice (5)</option>
+                                <option value="6">Info (6)</option>
+                                <option value="7">Debug (7)</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="minSeverityFilter">Min Severity:</label>
+                            <select id="minSeverityFilter">
+                                <option value="">None</option>
+                                <option value="0">Emergency+</option>
+                                <option value="1">Alert+</option>
+                                <option value="2">Critical+</option>
+                                <option value="3">Error+</option>
+                                <option value="4">Warning+</option>
+                                <option value="5">Notice+</option>
+                                <option value="6">Info+</option>
+                                <option value="7">Debug+</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label for="hostnameFilter">Hostname:</label>
+                            <input type="text" id="hostnameFilter" placeholder="Filter by hostname">
+                        </div>
+                        <div class="filter-group">
+                            <label for="appNameFilter">App Name:</label>
+                            <input type="text" id="appNameFilter" placeholder="Filter by application">
+                        </div>
+                        <div class="filter-group">
+                            <label for="procIdFilter">Process ID:</label>
+                            <input type="text" id="procIdFilter" placeholder="Filter by process ID">
+                        </div>
+                    </div>
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label for="msgIdFilter">Message ID:</label>
+                            <input type="text" id="msgIdFilter" placeholder="Filter by message ID">
+                        </div>
+                        <div class="filter-group">
+                            <label for="textFilter">Message Text:</label>
+                            <input type="text" id="textFilter" placeholder="Search in message content">
+                        </div>
+                        <div class="filter-group filter-actions">
+                            <button id="applyFilters" class="btn-primary">Apply Filters</button>
+                            <button id="clearFilters" class="btn-secondary">Clear All</button>
+                        </div>
+                    </div>
+                </div>
+
+            <!-- Display Options -->
+            <div class="display-panel" id="displayPanel">
+                <div class="display-header">
+                    <h3>Display Options</h3>
+                    <button class="display-toggle" id="displayToggle">Show Options</button>
+                </div>
+                <div class="display-content hidden" id="displayContent">
+                    <div class="display-section">
+                        <h4>Show/Hide Fields</h4>
+                        <div class="checkbox-grid">
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="showTimestamp" checked>
+                                <span>Timestamp</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="showPriority" checked>
+                                <span>Priority</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="showFacility" checked>
+                                <span>Facility</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="showSeverity" checked>
+                                <span>Severity</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="showHostname" checked>
+                                <span>Hostname</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="showAppName" checked>
+                                <span>App Name</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="showProcId" checked>
+                                <span>Process ID</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="showMsgId" checked>
+                                <span>Message ID</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="display-section">
+                        <h4>Layout Options</h4>
+                        <div class="layout-options">
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="showSeparators" checked>
+                                <span>Field Separators</span>
+                            </label>
+                            <label class="checkbox-item">
+                                <input type="checkbox" id="compactMode">
+                                <span>Compact Mode</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="display-actions">
+                        <button id="resetDisplayOptions" class="btn-secondary">Reset to Default</button>
+                    </div>
+                </div>
+            </div>
+
             <div class="terminal-container">
                 <div class="terminal-header">
                     <div class="terminal-controls">
@@ -24,17 +180,31 @@
                         <span class="control-dot yellow"></span>
                         <span class="control-dot green"></span>
                     </div>
-                    <div class="terminal-title">Log Stream</div>
+                    <div class="terminal-title">RFC5424 Log Stream</div>
                 </div>
                 
                 <div class="terminal-content" id="terminal">
                     <div class="log-container" id="logContainer">
                         <div class="welcome-message">
                             <div class="log-entry">
-                                <span class="timestamp" id="welcomeTimestamp">Loading...</span>
-                                <span class="level info">INFO</span>
-                                <span class="tracking-id">system</span>
-                                <span class="message">OpenTrail log viewer initialized. Waiting for log entries...</span>
+                                <div class="log-entry-header">
+                                    <span class="timestamp" id="welcomeTimestamp">Loading...</span>
+                                    <span class="field-separator">|</span>
+                                    <span class="priority">P:134</span>
+                                    <span class="field-separator">|</span>
+                                    <span class="facility">Local0</span>
+                                    <span class="field-separator">|</span>
+                                    <span class="severity info">INFO</span>
+                                    <span class="field-separator">|</span>
+                                    <span class="hostname">localhost</span>
+                                    <span class="field-separator">|</span>
+                                    <span class="app-name">opentrail</span>
+                                    <span class="field-separator">|</span>
+                                    <span class="proc-id">-</span>
+                                    <span class="field-separator">|</span>
+                                    <span class="msg-id">startup</span>
+                                </div>
+                                <div class="log-entry-message">OpenTrail RFC5424 log viewer initialized. Waiting for log entries...</div>
                             </div>
                         </div>
                     </div>

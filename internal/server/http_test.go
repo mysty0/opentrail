@@ -44,8 +44,8 @@ func setupTestHTTPServer(t *testing.T) (*HTTPServer, func()) {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
 	
-	// Create parser
-	logParser := parser.NewDefaultLogParser()
+	// Create RFC5424 parser
+	logParser := parser.NewRFC5424Parser(false)
 	
 	// Create service
 	logService := service.NewLogService(logParser, storage)
@@ -289,7 +289,7 @@ func TestHTTPServer_LogsEndpoint_TextFilter(t *testing.T) {
 	}
 }
 
-func TestHTTPServer_LogsEndpoint_LevelFilter(t *testing.T) {
+func TestHTTPServer_LogsEndpoint_RFC5424Filters(t *testing.T) {
 	server, cleanup := setupTestHTTPServer(t)
 	defer cleanup()
 	
@@ -302,28 +302,69 @@ func TestHTTPServer_LogsEndpoint_LevelFilter(t *testing.T) {
 	testServer := httptest.NewServer(mux)
 	defer testServer.Close()
 	
-	// Test level filter
-	resp, err := http.Get(testServer.URL + "/api/logs?level=ERROR")
-	if err != nil {
-		t.Fatalf("Failed to call logs endpoint with level filter: %v", err)
+	testCases := []struct {
+		name  string
+		query string
+	}{
+		{
+			name:  "Facility filter",
+			query: "facility=16",
+		},
+		{
+			name:  "Severity filter",
+			query: "severity=6",
+		},
+		{
+			name:  "Min severity filter",
+			query: "min_severity=4",
+		},
+		{
+			name:  "Hostname filter",
+			query: "hostname=test-host",
+		},
+		{
+			name:  "App name filter",
+			query: "app_name=test-app",
+		},
+		{
+			name:  "Proc ID filter",
+			query: "proc_id=123",
+		},
+		{
+			name:  "Msg ID filter",
+			query: "msg_id=test",
+		},
+		{
+			name:  "Structured data query",
+			query: "structured_data_query=test",
+		},
 	}
-	defer resp.Body.Close()
 	
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", resp.StatusCode)
-	}
-	
-	var apiResp APIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		t.Fatalf("Failed to decode API response: %v", err)
-	}
-	
-	if !apiResp.Success {
-		t.Errorf("Expected success=true, got %v", apiResp.Success)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := http.Get(testServer.URL + "/api/logs?" + tc.query)
+			if err != nil {
+				t.Fatalf("Failed to call logs endpoint with %s: %v", tc.name, err)
+			}
+			defer resp.Body.Close()
+			
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("Expected status 200, got %d", resp.StatusCode)
+			}
+			
+			var apiResp APIResponse
+			if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+				t.Fatalf("Failed to decode API response: %v", err)
+			}
+			
+			if !apiResp.Success {
+				t.Errorf("Expected success=true, got %v", apiResp.Success)
+			}
+		})
 	}
 }
 
-func TestHTTPServer_LogsEndpoint_TrackingIDFilter(t *testing.T) {
+func TestHTTPServer_LogsEndpoint_RFC5424CombinedFilters(t *testing.T) {
 	server, cleanup := setupTestHTTPServer(t)
 	defer cleanup()
 	
@@ -336,10 +377,17 @@ func TestHTTPServer_LogsEndpoint_TrackingIDFilter(t *testing.T) {
 	testServer := httptest.NewServer(mux)
 	defer testServer.Close()
 	
-	// Test tracking ID filter
-	resp, err := http.Get(testServer.URL + "/api/logs?tracking_id=user123")
+	// Test combined RFC5424 filters
+	queryParams := url.Values{}
+	queryParams.Set("facility", "16")
+	queryParams.Set("severity", "6")
+	queryParams.Set("hostname", "test-host")
+	queryParams.Set("app_name", "test-app")
+	queryParams.Set("limit", "10")
+	
+	resp, err := http.Get(testServer.URL + "/api/logs?" + queryParams.Encode())
 	if err != nil {
-		t.Fatalf("Failed to call logs endpoint with tracking_id filter: %v", err)
+		t.Fatalf("Failed to call logs endpoint with combined RFC5424 filters: %v", err)
 	}
 	defer resp.Body.Close()
 	
@@ -445,11 +493,11 @@ func TestHTTPServer_LogsEndpoint_CombinedFilters(t *testing.T) {
 	testServer := httptest.NewServer(mux)
 	defer testServer.Close()
 	
-	// Test combined filters
+	// Test combined filters with text search and RFC5424 fields
 	queryParams := url.Values{}
-	queryParams.Set("text", "user")
-	queryParams.Set("level", "INFO")
-	queryParams.Set("tracking_id", "user123")
+	queryParams.Set("text", "test")
+	queryParams.Set("facility", "16")
+	queryParams.Set("hostname", "test-host")
 	queryParams.Set("limit", "10")
 	
 	resp, err := http.Get(testServer.URL + "/api/logs?" + queryParams.Encode())
@@ -510,6 +558,21 @@ func TestHTTPServer_LogsEndpoint_InvalidParameters(t *testing.T) {
 		{
 			name:       "Invalid offset - negative",
 			query:      "offset=-1",
+			expectCode: http.StatusBadRequest,
+		},
+		{
+			name:       "Invalid facility - non-numeric",
+			query:      "facility=invalid",
+			expectCode: http.StatusBadRequest,
+		},
+		{
+			name:       "Invalid severity - non-numeric",
+			query:      "severity=invalid",
+			expectCode: http.StatusBadRequest,
+		},
+		{
+			name:       "Invalid min_severity - non-numeric",
+			query:      "min_severity=invalid",
 			expectCode: http.StatusBadRequest,
 		},
 	}
@@ -974,6 +1037,117 @@ func TestHTTPServer_AuthMiddleware_MissingAuthHeader(t *testing.T) {
 	}
 }
 
+func TestHTTPServer_ParseSearchQuery_RFC5424Fields(t *testing.T) {
+	server, cleanup := setupTestHTTPServer(t)
+	defer cleanup()
+	
+	testCases := []struct {
+		name     string
+		query    string
+		expected types.SearchQuery
+	}{
+		{
+			name:  "All RFC5424 fields",
+			query: "facility=16&severity=6&min_severity=4&hostname=test-host&app_name=test-app&proc_id=123&msg_id=test-msg&structured_data_query=test-data",
+			expected: types.SearchQuery{
+				Facility:            func() *int { i := 16; return &i }(),
+				Severity:            func() *int { i := 6; return &i }(),
+				MinSeverity:         func() *int { i := 4; return &i }(),
+				Hostname:            "test-host",
+				AppName:             "test-app",
+				ProcID:              "123",
+				MsgID:               "test-msg",
+				StructuredDataQuery: "test-data",
+				Limit:               100, // Default limit
+			},
+		},
+		{
+			name:  "Facility only",
+			query: "facility=8",
+			expected: types.SearchQuery{
+				Facility: func() *int { i := 8; return &i }(),
+				Limit:    100,
+			},
+		},
+		{
+			name:  "Severity and min_severity",
+			query: "severity=3&min_severity=1",
+			expected: types.SearchQuery{
+				Severity:    func() *int { i := 3; return &i }(),
+				MinSeverity: func() *int { i := 1; return &i }(),
+				Limit:       100,
+			},
+		},
+		{
+			name:  "String fields",
+			query: "hostname=web01&app_name=nginx&proc_id=1234&msg_id=access",
+			expected: types.SearchQuery{
+				Hostname: "web01",
+				AppName:  "nginx",
+				ProcID:   "1234",
+				MsgID:    "access",
+				Limit:    100,
+			},
+		},
+	}
+	
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a mock request with the query parameters
+			req := httptest.NewRequest("GET", "/api/logs?"+tc.query, nil)
+			
+			// Parse the search query
+			result, err := server.parseSearchQuery(req)
+			if err != nil {
+				t.Fatalf("Failed to parse search query: %v", err)
+			}
+			
+			// Compare the results
+			if tc.expected.Facility != nil {
+				if result.Facility == nil || *result.Facility != *tc.expected.Facility {
+					t.Errorf("Expected facility %v, got %v", tc.expected.Facility, result.Facility)
+				}
+			}
+			
+			if tc.expected.Severity != nil {
+				if result.Severity == nil || *result.Severity != *tc.expected.Severity {
+					t.Errorf("Expected severity %v, got %v", tc.expected.Severity, result.Severity)
+				}
+			}
+			
+			if tc.expected.MinSeverity != nil {
+				if result.MinSeverity == nil || *result.MinSeverity != *tc.expected.MinSeverity {
+					t.Errorf("Expected min_severity %v, got %v", tc.expected.MinSeverity, result.MinSeverity)
+				}
+			}
+			
+			if result.Hostname != tc.expected.Hostname {
+				t.Errorf("Expected hostname %q, got %q", tc.expected.Hostname, result.Hostname)
+			}
+			
+			if result.AppName != tc.expected.AppName {
+				t.Errorf("Expected app_name %q, got %q", tc.expected.AppName, result.AppName)
+			}
+			
+			if result.ProcID != tc.expected.ProcID {
+				t.Errorf("Expected proc_id %q, got %q", tc.expected.ProcID, result.ProcID)
+			}
+			
+			if result.MsgID != tc.expected.MsgID {
+				t.Errorf("Expected msg_id %q, got %q", tc.expected.MsgID, result.MsgID)
+			}
+			
+			if result.StructuredDataQuery != tc.expected.StructuredDataQuery {
+				t.Errorf("Expected structured_data_query %q, got %q", tc.expected.StructuredDataQuery, result.StructuredDataQuery)
+			}
+			
+			if result.Limit != tc.expected.Limit {
+				t.Errorf("Expected limit %d, got %d", tc.expected.Limit, result.Limit)
+			}
+		})
+	}
+}
+
 // WebSocket test helper functions
 
 func setupWebSocketTestServer(t *testing.T, authEnabled bool) (*HTTPServer, *httptest.Server, func()) {
@@ -996,8 +1170,8 @@ func setupWebSocketTestServer(t *testing.T, authEnabled bool) (*HTTPServer, *htt
 		t.Fatalf("Failed to create storage: %v", err)
 	}
 	
-	// Create parser
-	p := parser.NewDefaultLogParser()
+	// Create RFC5424 parser
+	p := parser.NewRFC5424Parser(false)
 	
 	// Create service
 	logService := service.NewLogService(p, store)

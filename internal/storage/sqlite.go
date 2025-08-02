@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -34,14 +35,35 @@ func NewSQLiteStorage(dbPath string) (interfaces.LogStorage, error) {
 
 // initializeDatabase creates the necessary tables and indexes
 func (s *SQLiteStorage) initializeDatabase() error {
-	// Create main logs table
+	// Remove old database file on startup (hard reset)
+	if _, err := s.db.Exec("DROP TABLE IF EXISTS logs"); err != nil {
+		return fmt.Errorf("failed to drop old logs table: %w", err)
+	}
+	if _, err := s.db.Exec("DROP TABLE IF EXISTS logs_fts"); err != nil {
+		return fmt.Errorf("failed to drop old FTS table: %w", err)
+	}
+
+	// Create main RFC5424 logs table
 	createLogsTable := `
-	CREATE TABLE IF NOT EXISTS logs (
+	CREATE TABLE logs (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		
+		-- RFC5424 Header Fields
+		priority INTEGER NOT NULL,
+		facility INTEGER NOT NULL,
+		severity INTEGER NOT NULL,
+		version INTEGER NOT NULL DEFAULT 1,
 		timestamp DATETIME NOT NULL,
-		level TEXT NOT NULL,
-		tracking_id TEXT,
+		hostname TEXT,
+		app_name TEXT,
+		proc_id TEXT,
+		msg_id TEXT,
+		
+		-- Structured Data and Message
+		structured_data TEXT, -- JSON string
 		message TEXT NOT NULL,
+		
+		-- System Fields
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`
 
@@ -49,9 +71,9 @@ func (s *SQLiteStorage) initializeDatabase() error {
 		return fmt.Errorf("failed to create logs table: %w", err)
 	}
 
-	// Create FTS5 virtual table for full-text search
+	// Create FTS5 virtual table for full-text search on message
 	createFTSTable := `
-	CREATE VIRTUAL TABLE IF NOT EXISTS logs_fts USING fts5(
+	CREATE VIRTUAL TABLE logs_fts USING fts5(
 		message,
 		content='logs',
 		content_rowid='id'
@@ -61,12 +83,21 @@ func (s *SQLiteStorage) initializeDatabase() error {
 		return fmt.Errorf("failed to create FTS table: %w", err)
 	}
 
-	// Create indexes for efficient querying
+	// Create indexes for efficient RFC5424 field queries
 	indexes := []string{
-		"CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);",
-		"CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level);",
-		"CREATE INDEX IF NOT EXISTS idx_logs_tracking_id ON logs(tracking_id);",
-		"CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at);",
+		"CREATE INDEX idx_logs_timestamp ON logs(timestamp);",
+		"CREATE INDEX idx_logs_facility ON logs(facility);",
+		"CREATE INDEX idx_logs_severity ON logs(severity);",
+		"CREATE INDEX idx_logs_hostname ON logs(hostname);",
+		"CREATE INDEX idx_logs_app_name ON logs(app_name);",
+		"CREATE INDEX idx_logs_proc_id ON logs(proc_id);",
+		"CREATE INDEX idx_logs_msg_id ON logs(msg_id);",
+		"CREATE INDEX idx_logs_priority ON logs(priority);",
+		"CREATE INDEX idx_logs_created_at ON logs(created_at);",
+		// Composite indexes for common query patterns
+		"CREATE INDEX idx_logs_facility_severity ON logs(facility, severity);",
+		"CREATE INDEX idx_logs_hostname_app_name ON logs(hostname, app_name);",
+		"CREATE INDEX idx_logs_timestamp_severity ON logs(timestamp, severity);",
 	}
 
 	for _, indexSQL := range indexes {
@@ -77,13 +108,13 @@ func (s *SQLiteStorage) initializeDatabase() error {
 
 	// Create triggers to keep FTS5 table in sync
 	triggers := []string{
-		`CREATE TRIGGER IF NOT EXISTS logs_ai AFTER INSERT ON logs BEGIN
+		`CREATE TRIGGER logs_ai AFTER INSERT ON logs BEGIN
 			INSERT INTO logs_fts(rowid, message) VALUES (new.id, new.message);
 		END;`,
-		`CREATE TRIGGER IF NOT EXISTS logs_ad AFTER DELETE ON logs BEGIN
+		`CREATE TRIGGER logs_ad AFTER DELETE ON logs BEGIN
 			INSERT INTO logs_fts(logs_fts, rowid, message) VALUES('delete', old.id, old.message);
 		END;`,
-		`CREATE TRIGGER IF NOT EXISTS logs_au AFTER UPDATE ON logs BEGIN
+		`CREATE TRIGGER logs_au AFTER UPDATE ON logs BEGIN
 			INSERT INTO logs_fts(logs_fts, rowid, message) VALUES('delete', old.id, old.message);
 			INSERT INTO logs_fts(rowid, message) VALUES (new.id, new.message);
 		END;`,
@@ -100,12 +131,25 @@ func (s *SQLiteStorage) initializeDatabase() error {
 
 // Store saves a log entry to the database
 func (s *SQLiteStorage) Store(entry *types.LogEntry) error {
+	// Convert structured data to JSON string
+	var structuredDataJSON string
+	if entry.StructuredData != nil {
+		jsonBytes, err := json.Marshal(entry.StructuredData)
+		if err != nil {
+			return fmt.Errorf("failed to marshal structured data: %w", err)
+		}
+		structuredDataJSON = string(jsonBytes)
+	}
+
 	query := `
-	INSERT INTO logs (timestamp, level, tracking_id, message)
-	VALUES (?, ?, ?, ?)
+	INSERT INTO logs (priority, facility, severity, version, timestamp, hostname, app_name, proc_id, msg_id, structured_data, message)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
-	result, err := s.db.Exec(query, entry.Timestamp, entry.Level, entry.TrackingID, entry.Message)
+	result, err := s.db.Exec(query, 
+		entry.Priority, entry.Facility, entry.Severity, entry.Version,
+		entry.Timestamp, entry.Hostname, entry.AppName, entry.ProcID, entry.MsgID,
+		structuredDataJSON, entry.Message)
 	if err != nil {
 		return fmt.Errorf("failed to store log entry: %w", err)
 	}
@@ -124,27 +168,52 @@ func (s *SQLiteStorage) Search(query types.SearchQuery) ([]*types.LogEntry, erro
 	var conditions []string
 	var args []interface{}
 
-	baseQuery := "SELECT id, timestamp, level, tracking_id, message FROM logs"
+	baseQuery := `SELECT id, priority, facility, severity, version, timestamp, hostname, app_name, proc_id, msg_id, structured_data, message, created_at FROM logs`
 
 	// Handle full-text search
 	if query.Text != "" {
 		baseQuery = `
-		SELECT l.id, l.timestamp, l.level, l.tracking_id, l.message 
+		SELECT l.id, l.priority, l.facility, l.severity, l.version, l.timestamp, l.hostname, l.app_name, l.proc_id, l.msg_id, l.structured_data, l.message, l.created_at
 		FROM logs l 
 		JOIN logs_fts fts ON l.id = fts.rowid 
 		WHERE logs_fts MATCH ?`
 		args = append(args, query.Text)
 	}
 
-	// Add other filters
-	if query.Level != "" {
-		conditions = append(conditions, "level = ?")
-		args = append(args, query.Level)
+	// Add RFC5424 filters
+	if query.Facility != nil {
+		conditions = append(conditions, "facility = ?")
+		args = append(args, *query.Facility)
 	}
 
-	if query.TrackingID != "" {
-		conditions = append(conditions, "tracking_id = ?")
-		args = append(args, query.TrackingID)
+	if query.Severity != nil {
+		conditions = append(conditions, "severity = ?")
+		args = append(args, *query.Severity)
+	}
+
+	if query.MinSeverity != nil {
+		conditions = append(conditions, "severity <= ?")
+		args = append(args, *query.MinSeverity)
+	}
+
+	if query.Hostname != "" {
+		conditions = append(conditions, "hostname = ?")
+		args = append(args, query.Hostname)
+	}
+
+	if query.AppName != "" {
+		conditions = append(conditions, "app_name = ?")
+		args = append(args, query.AppName)
+	}
+
+	if query.ProcID != "" {
+		conditions = append(conditions, "proc_id = ?")
+		args = append(args, query.ProcID)
+	}
+
+	if query.MsgID != "" {
+		conditions = append(conditions, "msg_id = ?")
+		args = append(args, query.MsgID)
 	}
 
 	if query.StartTime != nil {
@@ -155,6 +224,12 @@ func (s *SQLiteStorage) Search(query types.SearchQuery) ([]*types.LogEntry, erro
 	if query.EndTime != nil {
 		conditions = append(conditions, "timestamp <= ?")
 		args = append(args, query.EndTime)
+	}
+
+	// Handle structured data query (basic JSON search)
+	if query.StructuredDataQuery != "" {
+		conditions = append(conditions, "structured_data LIKE ?")
+		args = append(args, "%"+query.StructuredDataQuery+"%")
 	}
 
 	// Combine conditions
@@ -188,10 +263,23 @@ func (s *SQLiteStorage) Search(query types.SearchQuery) ([]*types.LogEntry, erro
 	var entries []*types.LogEntry
 	for rows.Next() {
 		entry := &types.LogEntry{}
-		err := rows.Scan(&entry.ID, &entry.Timestamp, &entry.Level, &entry.TrackingID, &entry.Message)
+		var structuredDataJSON sql.NullString
+		
+		err := rows.Scan(&entry.ID, &entry.Priority, &entry.Facility, &entry.Severity, &entry.Version,
+			&entry.Timestamp, &entry.Hostname, &entry.AppName, &entry.ProcID, &entry.MsgID,
+			&structuredDataJSON, &entry.Message, &entry.CreatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan log entry: %w", err)
 		}
+
+		// Parse structured data JSON
+		if structuredDataJSON.Valid && structuredDataJSON.String != "" {
+			var structuredData map[string]interface{}
+			if err := json.Unmarshal([]byte(structuredDataJSON.String), &structuredData); err == nil {
+				entry.StructuredData = structuredData
+			}
+		}
+
 		entries = append(entries, entry)
 	}
 
@@ -205,7 +293,7 @@ func (s *SQLiteStorage) Search(query types.SearchQuery) ([]*types.LogEntry, erro
 // GetRecent retrieves the most recent log entries up to the specified limit
 func (s *SQLiteStorage) GetRecent(limit int) ([]*types.LogEntry, error) {
 	query := `
-	SELECT id, timestamp, level, tracking_id, message 
+	SELECT id, priority, facility, severity, version, timestamp, hostname, app_name, proc_id, msg_id, structured_data, message, created_at
 	FROM logs 
 	ORDER BY timestamp DESC 
 	LIMIT ?
@@ -220,10 +308,23 @@ func (s *SQLiteStorage) GetRecent(limit int) ([]*types.LogEntry, error) {
 	var entries []*types.LogEntry
 	for rows.Next() {
 		entry := &types.LogEntry{}
-		err := rows.Scan(&entry.ID, &entry.Timestamp, &entry.Level, &entry.TrackingID, &entry.Message)
+		var structuredDataJSON sql.NullString
+		
+		err := rows.Scan(&entry.ID, &entry.Priority, &entry.Facility, &entry.Severity, &entry.Version,
+			&entry.Timestamp, &entry.Hostname, &entry.AppName, &entry.ProcID, &entry.MsgID,
+			&structuredDataJSON, &entry.Message, &entry.CreatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan log entry: %w", err)
 		}
+
+		// Parse structured data JSON
+		if structuredDataJSON.Valid && structuredDataJSON.String != "" {
+			var structuredData map[string]interface{}
+			if err := json.Unmarshal([]byte(structuredDataJSON.String), &structuredData); err == nil {
+				entry.StructuredData = structuredData
+			}
+		}
+
 		entries = append(entries, entry)
 	}
 

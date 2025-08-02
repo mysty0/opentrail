@@ -41,13 +41,19 @@ type MockLogParser struct {
 }
 
 func (m *MockLogParser) Parse(rawMessage string) (*types.LogEntry, error) {
-	return &types.LogEntry{
-		ID:         1,
-		Timestamp:  time.Now(),
-		Level:      "INFO",
-		TrackingID: "test",
-		Message:    rawMessage,
-	}, nil
+	entry := &types.LogEntry{
+		ID:        1,
+		Version:   1,
+		Timestamp: time.Now(),
+		Hostname:  "test-host",
+		AppName:   "test-app",
+		ProcID:    "123",
+		MsgID:     "test",
+		Message:   rawMessage,
+		CreatedAt: time.Now(),
+	}
+	entry.SetPriority(134) // facility 16, severity 6
+	return entry, nil
 }
 
 func (m *MockLogParser) SetFormat(format string) error {
@@ -61,11 +67,18 @@ func TestLogStorageInterface(t *testing.T) {
 
 	// Test Store
 	entry := &types.LogEntry{
-		ID:         1,
-		Timestamp:  time.Now(),
-		Level:      "INFO",
-		TrackingID: "test-123",
-		Message:    "Test message",
+		ID:        1,
+		Priority:  134,
+		Facility:  16,
+		Severity:  6,
+		Version:   1,
+		Timestamp: time.Now(),
+		Hostname:  "test-host",
+		AppName:   "test-app",
+		ProcID:    "123",
+		MsgID:     "test",
+		Message:   "Test message",
+		CreatedAt: time.Now(),
 	}
 
 	err := storage.Store(entry)
@@ -84,8 +97,9 @@ func TestLogStorageInterface(t *testing.T) {
 
 	// Test Search
 	query := types.SearchQuery{
-		Text:  "test",
-		Limit: 10,
+		Text:     "test",
+		Hostname: "test-host",
+		Limit:    10,
 	}
 	results, err := storage.Search(query)
 	if err != nil {
@@ -136,11 +150,18 @@ func TestInterfaceContracts(t *testing.T) {
 
 	// Test that interface methods can be called
 	entry := &types.LogEntry{
-		ID:         1,
-		Timestamp:  time.Now(),
-		Level:      "DEBUG",
-		TrackingID: "contract-test",
-		Message:    "Interface contract test",
+		ID:        1,
+		Priority:  135,
+		Facility:  16,
+		Severity:  7,
+		Version:   1,
+		Timestamp: time.Now(),
+		Hostname:  "test-host",
+		AppName:   "test-app",
+		ProcID:    "123",
+		MsgID:     "test",
+		Message:   "Interface contract test",
+		CreatedAt: time.Now(),
 	}
 
 	err := storage.Store(entry)

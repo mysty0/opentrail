@@ -346,14 +346,56 @@ func (s *HTTPServer) parseSearchQuery(r *http.Request) (types.SearchQuery, error
 		query.Text = text
 	}
 	
-	// Parse level filter
-	if level := r.URL.Query().Get("level"); level != "" {
-		query.Level = level
+	// Parse facility filter
+	if facilityStr := r.URL.Query().Get("facility"); facilityStr != "" {
+		facility, err := strconv.Atoi(facilityStr)
+		if err != nil {
+			return query, fmt.Errorf("invalid facility value: %w", err)
+		}
+		query.Facility = &facility
 	}
 	
-	// Parse tracking ID filter
-	if trackingID := r.URL.Query().Get("tracking_id"); trackingID != "" {
-		query.TrackingID = trackingID
+	// Parse severity filter
+	if severityStr := r.URL.Query().Get("severity"); severityStr != "" {
+		severity, err := strconv.Atoi(severityStr)
+		if err != nil {
+			return query, fmt.Errorf("invalid severity value: %w", err)
+		}
+		query.Severity = &severity
+	}
+	
+	// Parse min severity filter
+	if minSeverityStr := r.URL.Query().Get("min_severity"); minSeverityStr != "" {
+		minSeverity, err := strconv.Atoi(minSeverityStr)
+		if err != nil {
+			return query, fmt.Errorf("invalid min_severity value: %w", err)
+		}
+		query.MinSeverity = &minSeverity
+	}
+	
+	// Parse hostname filter
+	if hostname := r.URL.Query().Get("hostname"); hostname != "" {
+		query.Hostname = hostname
+	}
+	
+	// Parse app name filter
+	if appName := r.URL.Query().Get("app_name"); appName != "" {
+		query.AppName = appName
+	}
+	
+	// Parse proc ID filter
+	if procID := r.URL.Query().Get("proc_id"); procID != "" {
+		query.ProcID = procID
+	}
+	
+	// Parse msg ID filter
+	if msgID := r.URL.Query().Get("msg_id"); msgID != "" {
+		query.MsgID = msgID
+	}
+	
+	// Parse structured data query
+	if structuredDataQuery := r.URL.Query().Get("structured_data_query"); structuredDataQuery != "" {
+		query.StructuredDataQuery = structuredDataQuery
 	}
 	
 	// Parse start time

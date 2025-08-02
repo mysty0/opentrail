@@ -19,12 +19,18 @@ func (m *MockParser) Parse(rawMessage string) (*types.LogEntry, error) {
 	if m.parseFunc != nil {
 		return m.parseFunc(rawMessage)
 	}
-	return &types.LogEntry{
-		Timestamp:  time.Now(),
-		Level:      "INFO",
-		TrackingID: "test",
-		Message:    rawMessage,
-	}, nil
+	entry := &types.LogEntry{
+		Version:   1,
+		Timestamp: time.Now(),
+		Hostname:  "test-host",
+		AppName:   "test-app",
+		ProcID:    "123",
+		MsgID:     "test",
+		Message:   rawMessage,
+		CreatedAt: time.Now(),
+	}
+	entry.SetPriority(134) // facility 16, severity 6
+	return entry, nil
 }
 
 func (m *MockParser) SetFormat(format string) error {
@@ -424,11 +430,18 @@ func TestLogService_ErrorHandling(t *testing.T) {
 			if msg == "error" {
 				return nil, fmt.Errorf("parse error")
 			}
-			return &types.LogEntry{
+			entry := &types.LogEntry{
+				Version:   1,
 				Timestamp: time.Now(),
-				Level:     "INFO",
+				Hostname:  "test-host",
+				AppName:   "test-app",
+				ProcID:    "123",
+				MsgID:     "test",
 				Message:   msg,
-			}, nil
+				CreatedAt: time.Now(),
+			}
+			entry.SetPriority(134) // facility 16, severity 6
+			return entry, nil
 		},
 	}
 	
@@ -556,6 +569,90 @@ func TestLogService_SearchAndGetRecent(t *testing.T) {
 	
 	if len(results) != 1 {
 		t.Errorf("Expected 1 result, got %d", len(results))
+	}
+}
+
+func TestLogService_SearchWithRFC5424Filters(t *testing.T) {
+	parser := &MockParser{}
+	storage := &MockStorage{}
+	service := NewLogService(parser, storage)
+	
+	// Test RFC5424 field filtering
+	expectedLogs := []*types.LogEntry{
+		{
+			ID:       1,
+			Priority: 134, // facility 16, severity 6
+			Facility: 16,
+			Severity: 6,
+			Hostname: "web01",
+			AppName:  "nginx",
+			ProcID:   "1234",
+			MsgID:    "access",
+			Message:  "test message",
+		},
+	}
+	
+	var capturedQuery types.SearchQuery
+	storage.searchFunc = func(query types.SearchQuery) ([]*types.LogEntry, error) {
+		capturedQuery = query
+		return expectedLogs, nil
+	}
+	
+	// Test search with RFC5424 filters
+	facility := 16
+	severity := 6
+	minSeverity := 4
+	query := types.SearchQuery{
+		Facility:            &facility,
+		Severity:            &severity,
+		MinSeverity:         &minSeverity,
+		Hostname:            "web01",
+		AppName:             "nginx",
+		ProcID:              "1234",
+		MsgID:               "access",
+		StructuredDataQuery: "test-data",
+	}
+	
+	results, err := service.Search(query)
+	if err != nil {
+		t.Errorf("Search with RFC5424 filters failed: %v", err)
+	}
+	
+	if len(results) != len(expectedLogs) {
+		t.Errorf("Expected %d results, got %d", len(expectedLogs), len(results))
+	}
+	
+	// Verify that the query was passed correctly to storage
+	if capturedQuery.Facility == nil || *capturedQuery.Facility != facility {
+		t.Errorf("Expected facility %d, got %v", facility, capturedQuery.Facility)
+	}
+	
+	if capturedQuery.Severity == nil || *capturedQuery.Severity != severity {
+		t.Errorf("Expected severity %d, got %v", severity, capturedQuery.Severity)
+	}
+	
+	if capturedQuery.MinSeverity == nil || *capturedQuery.MinSeverity != minSeverity {
+		t.Errorf("Expected min_severity %d, got %v", minSeverity, capturedQuery.MinSeverity)
+	}
+	
+	if capturedQuery.Hostname != "web01" {
+		t.Errorf("Expected hostname 'web01', got '%s'", capturedQuery.Hostname)
+	}
+	
+	if capturedQuery.AppName != "nginx" {
+		t.Errorf("Expected app_name 'nginx', got '%s'", capturedQuery.AppName)
+	}
+	
+	if capturedQuery.ProcID != "1234" {
+		t.Errorf("Expected proc_id '1234', got '%s'", capturedQuery.ProcID)
+	}
+	
+	if capturedQuery.MsgID != "access" {
+		t.Errorf("Expected msg_id 'access', got '%s'", capturedQuery.MsgID)
+	}
+	
+	if capturedQuery.StructuredDataQuery != "test-data" {
+		t.Errorf("Expected structured_data_query 'test-data', got '%s'", capturedQuery.StructuredDataQuery)
 	}
 }
 

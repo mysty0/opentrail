@@ -37,12 +37,8 @@ func TestTCPServer_Integration(t *testing.T) {
 	}
 	// Note: storage interface doesn't expose Close method, but it will be cleaned up when process ends
 	
-	// Create parser
-	parserInstance := parser.NewDefaultLogParser()
-	err = parserInstance.SetFormat(config.LogFormat)
-	if err != nil {
-		t.Fatalf("Failed to set parser format: %v", err)
-	}
+	// Create RFC5424 parser
+	parserInstance := parser.NewRFC5424Parser(false)
 	
 	// Create log service
 	logService := service.NewLogService(parserInstance, storageInstance)
@@ -70,12 +66,12 @@ func TestTCPServer_Integration(t *testing.T) {
 	}
 	defer conn.Close()
 	
-	// Send test log messages
+	// Send test RFC5424 log messages
 	testMessages := []string{
-		"2023-01-01T10:00:00Z|INFO|user123|User logged in successfully",
-		"2023-01-01T10:00:01Z|ERROR|user456|Failed to authenticate user",
-		"2023-01-01T10:00:02Z|DEBUG|user789|Processing user request",
-		"2023-01-01T10:00:03Z|WARN|user123|Session about to expire",
+		"<134>1 2023-01-01T10:00:00Z web01 app 123 login - User logged in successfully",
+		"<131>1 2023-01-01T10:00:01Z web02 app 456 auth - Failed to authenticate user", 
+		"<135>1 2023-01-01T10:00:02Z web03 app 789 debug - Processing user request",
+		"<132>1 2023-01-01T10:00:03Z web01 app 123 session - Session about to expire",
 	}
 	
 	writer := bufio.NewWriter(conn)
@@ -117,15 +113,15 @@ func TestTCPServer_Integration(t *testing.T) {
 	}
 	
 	// Verify the content of stored logs (logs are returned in reverse order - newest first)
-	expectedLevels := []string{"WARN", "DEBUG", "ERROR", "INFO"}
-	expectedTrackingIDs := []string{"user123", "user789", "user456", "user123"}
+	expectedSeverities := []int{4, 7, 3, 6} // warning, debug, error, info
+	expectedHostnames := []string{"web01", "web03", "web02", "web01"}
 	
 	for i, log := range logs {
-		if i < len(expectedLevels) && log.Level != expectedLevels[i] {
-			t.Errorf("Expected log %d level to be %s, got %s", i, expectedLevels[i], log.Level)
+		if i < len(expectedSeverities) && log.Severity != expectedSeverities[i] {
+			t.Errorf("Expected log %d severity to be %d, got %d", i, expectedSeverities[i], log.Severity)
 		}
-		if i < len(expectedTrackingIDs) && log.TrackingID != expectedTrackingIDs[i] {
-			t.Errorf("Expected log %d tracking ID to be %s, got %s", i, expectedTrackingIDs[i], log.TrackingID)
+		if i < len(expectedHostnames) && log.Hostname != expectedHostnames[i] {
+			t.Errorf("Expected log %d hostname to be %s, got %s", i, expectedHostnames[i], log.Hostname)
 		}
 	}
 	
@@ -155,9 +151,10 @@ func TestTCPServer_Integration(t *testing.T) {
 		// Test level filtering
 		var levelResults []*types.LogEntry
 		for retry := 0; retry < 3; retry++ {
+			severity := 3 // error severity
 			levelQuery := types.SearchQuery{
-				Level: "ERROR",
-				Limit: 10,
+				Severity: &severity,
+				Limit:    10,
 			}
 			
 			levelResults, err = logService.Search(levelQuery)
@@ -171,11 +168,11 @@ func TestTCPServer_Integration(t *testing.T) {
 			t.Logf("Level search failed after retries: %v", err)
 		} else {
 			if len(levelResults) != 1 {
-				t.Errorf("Expected 1 ERROR log, got %d", len(levelResults))
+				t.Errorf("Expected 1 error severity log, got %d", len(levelResults))
 			}
 			
-			if len(levelResults) > 0 && levelResults[0].Level != "ERROR" {
-				t.Errorf("Expected ERROR level log, got %s", levelResults[0].Level)
+			if len(levelResults) > 0 && levelResults[0].Severity != 3 {
+				t.Errorf("Expected severity 3 (error) log, got %d", levelResults[0].Severity)
 			}
 		}
 	}

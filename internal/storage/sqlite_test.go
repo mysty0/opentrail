@@ -35,10 +35,17 @@ func TestSQLiteStorage_Store(t *testing.T) {
 	defer cleanupTestStorage(storage)
 
 	entry := &types.LogEntry{
+		Priority:   134, // facility 16, severity 6
+		Facility:   16,
+		Severity:   6,
+		Version:    1,
 		Timestamp:  time.Now(),
-		Level:      "INFO",
-		TrackingID: "test-123",
+		Hostname:   "test-host",
+		AppName:    "test-app",
+		ProcID:     "123",
+		MsgID:      "test",
 		Message:    "Test log message",
+		CreatedAt:  time.Now(),
 	}
 
 	err := storage.Store(entry)
@@ -59,22 +66,43 @@ func TestSQLiteStorage_GetRecent(t *testing.T) {
 	// Store test entries
 	entries := []*types.LogEntry{
 		{
-			Timestamp:  time.Now().Add(-2 * time.Hour),
-			Level:      "INFO",
-			TrackingID: "test-1",
-			Message:    "First message",
+			Priority:  134, // facility 16, severity 6
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: time.Now().Add(-2 * time.Hour),
+			Hostname:  "test-host-1",
+			AppName:   "test-app",
+			ProcID:    "1",
+			MsgID:     "test",
+			Message:   "First message",
+			CreatedAt: time.Now(),
 		},
 		{
-			Timestamp:  time.Now().Add(-1 * time.Hour),
-			Level:      "WARN",
-			TrackingID: "test-2",
-			Message:    "Second message",
+			Priority:  132, // facility 16, severity 4
+			Facility:  16,
+			Severity:  4,
+			Version:   1,
+			Timestamp: time.Now().Add(-1 * time.Hour),
+			Hostname:  "test-host-2",
+			AppName:   "test-app",
+			ProcID:    "2",
+			MsgID:     "test",
+			Message:   "Second message",
+			CreatedAt: time.Now(),
 		},
 		{
-			Timestamp:  time.Now(),
-			Level:      "ERROR",
-			TrackingID: "test-3",
-			Message:    "Third message",
+			Priority:  131, // facility 16, severity 3
+			Facility:  16,
+			Severity:  3,
+			Version:   1,
+			Timestamp: time.Now(),
+			Hostname:  "test-host-3",
+			AppName:   "test-app",
+			ProcID:    "3",
+			MsgID:     "test",
+			Message:   "Third message",
+			CreatedAt: time.Now(),
 		},
 	}
 
@@ -107,22 +135,43 @@ func TestSQLiteStorage_Search_FullText(t *testing.T) {
 	// Store test entries
 	entries := []*types.LogEntry{
 		{
-			Timestamp:  time.Now(),
-			Level:      "INFO",
-			TrackingID: "test-1",
-			Message:    "Database connection established",
+			Priority:  134, // facility 16, severity 6
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: time.Now(),
+			Hostname:  "db-host",
+			AppName:   "db-app",
+			ProcID:    "1",
+			MsgID:     "conn",
+			Message:   "Database connection established",
+			CreatedAt: time.Now(),
 		},
 		{
-			Timestamp:  time.Now(),
-			Level:      "ERROR",
-			TrackingID: "test-2",
-			Message:    "Failed to connect to database",
+			Priority:  131, // facility 16, severity 3
+			Facility:  16,
+			Severity:  3,
+			Version:   1,
+			Timestamp: time.Now(),
+			Hostname:  "db-host",
+			AppName:   "db-app",
+			ProcID:    "2",
+			MsgID:     "error",
+			Message:   "Failed to connect to database",
+			CreatedAt: time.Now(),
 		},
 		{
-			Timestamp:  time.Now(),
-			Level:      "INFO",
-			TrackingID: "test-3",
-			Message:    "User authentication successful",
+			Priority:  134, // facility 16, severity 6
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: time.Now(),
+			Hostname:  "auth-host",
+			AppName:   "auth-app",
+			ProcID:    "3",
+			MsgID:     "auth",
+			Message:   "User authentication successful",
+			CreatedAt: time.Now(),
 		},
 	}
 
@@ -168,25 +217,46 @@ func TestSQLiteStorage_Search_LevelFilter(t *testing.T) {
 	storage := setupTestStorage(t)
 	defer cleanupTestStorage(storage)
 
-	// Store test entries with different levels
+	// Store test entries with different severities
 	entries := []*types.LogEntry{
 		{
-			Timestamp:  time.Now(),
-			Level:      "INFO",
-			TrackingID: "test-1",
-			Message:    "Info message",
+			Priority:  134, // facility 16, severity 6 (info)
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: time.Now(),
+			Hostname:  "test-host",
+			AppName:   "test-app",
+			ProcID:    "1",
+			MsgID:     "info",
+			Message:   "Info message",
+			CreatedAt: time.Now(),
 		},
 		{
-			Timestamp:  time.Now(),
-			Level:      "ERROR",
-			TrackingID: "test-2",
-			Message:    "Error message",
+			Priority:  131, // facility 16, severity 3 (error)
+			Facility:  16,
+			Severity:  3,
+			Version:   1,
+			Timestamp: time.Now(),
+			Hostname:  "test-host",
+			AppName:   "test-app",
+			ProcID:    "2",
+			MsgID:     "error",
+			Message:   "Error message",
+			CreatedAt: time.Now(),
 		},
 		{
-			Timestamp:  time.Now(),
-			Level:      "WARN",
-			TrackingID: "test-3",
-			Message:    "Warning message",
+			Priority:  132, // facility 16, severity 4 (warning)
+			Facility:  16,
+			Severity:  4,
+			Version:   1,
+			Timestamp: time.Now(),
+			Hostname:  "test-host",
+			AppName:   "test-app",
+			ProcID:    "3",
+			MsgID:     "warn",
+			Message:   "Warning message",
+			CreatedAt: time.Now(),
 		},
 	}
 
@@ -196,9 +266,10 @@ func TestSQLiteStorage_Search_LevelFilter(t *testing.T) {
 		}
 	}
 
-	// Test level filter
+	// Test severity filter
+	severity := 3 // error severity
 	query := types.SearchQuery{
-		Level: "ERROR",
+		Severity: &severity,
 	}
 
 	results, err := storage.Search(query)
@@ -207,37 +278,58 @@ func TestSQLiteStorage_Search_LevelFilter(t *testing.T) {
 	}
 
 	if len(results) != 1 {
-		t.Errorf("Expected 1 result for ERROR level, got %d", len(results))
+		t.Errorf("Expected 1 result for severity 3, got %d", len(results))
 	}
 
-	if results[0].Level != "ERROR" {
-		t.Errorf("Expected ERROR level, got %s", results[0].Level)
+	if results[0].Severity != 3 {
+		t.Errorf("Expected severity 3, got %d", results[0].Severity)
 	}
 }
 
-func TestSQLiteStorage_Search_TrackingIDFilter(t *testing.T) {
+func TestSQLiteStorage_Search_HostnameFilter(t *testing.T) {
 	storage := setupTestStorage(t)
 	defer cleanupTestStorage(storage)
 
-	// Store test entries with different tracking IDs
+	// Store test entries with different hostnames
 	entries := []*types.LogEntry{
 		{
-			Timestamp:  time.Now(),
-			Level:      "INFO",
-			TrackingID: "user-123",
-			Message:    "User action",
+			Priority:  134,
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: time.Now(),
+			Hostname:  "web-01",
+			AppName:   "nginx",
+			ProcID:    "123",
+			MsgID:     "access",
+			Message:   "User action",
+			CreatedAt: time.Now(),
 		},
 		{
-			Timestamp:  time.Now(),
-			Level:      "INFO",
-			TrackingID: "user-456",
-			Message:    "Another user action",
+			Priority:  134,
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: time.Now(),
+			Hostname:  "web-02",
+			AppName:   "nginx",
+			ProcID:    "456",
+			MsgID:     "access",
+			Message:   "Another user action",
+			CreatedAt: time.Now(),
 		},
 		{
-			Timestamp:  time.Now(),
-			Level:      "INFO",
-			TrackingID: "user-123",
-			Message:    "Same user different action",
+			Priority:  134,
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: time.Now(),
+			Hostname:  "web-01",
+			AppName:   "nginx",
+			ProcID:    "789",
+			MsgID:     "access",
+			Message:   "Same host different action",
+			CreatedAt: time.Now(),
 		},
 	}
 
@@ -247,9 +339,9 @@ func TestSQLiteStorage_Search_TrackingIDFilter(t *testing.T) {
 		}
 	}
 
-	// Test tracking ID filter
+	// Test hostname filter
 	query := types.SearchQuery{
-		TrackingID: "user-123",
+		Hostname: "web-01",
 	}
 
 	results, err := storage.Search(query)
@@ -258,12 +350,12 @@ func TestSQLiteStorage_Search_TrackingIDFilter(t *testing.T) {
 	}
 
 	if len(results) != 2 {
-		t.Errorf("Expected 2 results for tracking ID 'user-123', got %d", len(results))
+		t.Errorf("Expected 2 results for hostname 'web-01', got %d", len(results))
 	}
 
 	for _, result := range results {
-		if result.TrackingID != "user-123" {
-			t.Errorf("Expected tracking ID 'user-123', got %s", result.TrackingID)
+		if result.Hostname != "web-01" {
+			t.Errorf("Expected hostname 'web-01', got %s", result.Hostname)
 		}
 	}
 }
@@ -277,22 +369,43 @@ func TestSQLiteStorage_Search_TimeRange(t *testing.T) {
 	// Store test entries with different timestamps
 	entries := []*types.LogEntry{
 		{
-			Timestamp:  now.Add(-2 * time.Hour),
-			Level:      "INFO",
-			TrackingID: "test-1",
-			Message:    "Old message",
+			Priority:  134,
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: now.Add(-2 * time.Hour),
+			Hostname:  "test-host",
+			AppName:   "test-app",
+			ProcID:    "1",
+			MsgID:     "test",
+			Message:   "Old message",
+			CreatedAt: time.Now(),
 		},
 		{
-			Timestamp:  now.Add(-30 * time.Minute),
-			Level:      "INFO",
-			TrackingID: "test-2",
-			Message:    "Recent message",
+			Priority:  134,
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: now.Add(-30 * time.Minute),
+			Hostname:  "test-host",
+			AppName:   "test-app",
+			ProcID:    "2",
+			MsgID:     "test",
+			Message:   "Recent message",
+			CreatedAt: time.Now(),
 		},
 		{
-			Timestamp:  now,
-			Level:      "INFO",
-			TrackingID: "test-3",
-			Message:    "Current message",
+			Priority:  134,
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: now,
+			Hostname:  "test-host",
+			AppName:   "test-app",
+			ProcID:    "3",
+			MsgID:     "test",
+			Message:   "Current message",
+			CreatedAt: time.Now(),
 		},
 	}
 
@@ -334,22 +447,43 @@ func TestSQLiteStorage_Search_CombinedFilters(t *testing.T) {
 	// Store test entries
 	entries := []*types.LogEntry{
 		{
-			Timestamp:  now,
-			Level:      "ERROR",
-			TrackingID: "user-123",
-			Message:    "Database connection failed",
+			Priority:  131, // facility 16, severity 3 (error)
+			Facility:  16,
+			Severity:  3,
+			Version:   1,
+			Timestamp: now,
+			Hostname:  "db-host",
+			AppName:   "db-app",
+			ProcID:    "123",
+			MsgID:     "error",
+			Message:   "Database connection failed",
+			CreatedAt: time.Now(),
 		},
 		{
-			Timestamp:  now,
-			Level:      "INFO",
-			TrackingID: "user-123",
-			Message:    "Database connection established",
+			Priority:  134, // facility 16, severity 6 (info)
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: now,
+			Hostname:  "db-host",
+			AppName:   "db-app",
+			ProcID:    "123",
+			MsgID:     "info",
+			Message:   "Database connection established",
+			CreatedAt: time.Now(),
 		},
 		{
-			Timestamp:  now,
-			Level:      "ERROR",
-			TrackingID: "user-456",
-			Message:    "Database timeout error",
+			Priority:  131, // facility 16, severity 3 (error)
+			Facility:  16,
+			Severity:  3,
+			Version:   1,
+			Timestamp: now,
+			Hostname:  "db-host",
+			AppName:   "db-app",
+			ProcID:    "456",
+			MsgID:     "error",
+			Message:   "Database timeout error",
+			CreatedAt: time.Now(),
 		},
 	}
 
@@ -359,11 +493,12 @@ func TestSQLiteStorage_Search_CombinedFilters(t *testing.T) {
 		}
 	}
 
-	// Test combined filters: text search + level + tracking ID
+	// Test combined filters: text search + severity + proc_id
+	severity := 3
 	query := types.SearchQuery{
-		Text:       "database",
-		Level:      "ERROR",
-		TrackingID: "user-123",
+		Text:     "database",
+		Severity: &severity,
+		ProcID:   "123",
 	}
 
 	results, err := storage.Search(query)
@@ -377,7 +512,7 @@ func TestSQLiteStorage_Search_CombinedFilters(t *testing.T) {
 
 	if len(results) > 0 {
 		result := results[0]
-		if result.Level != "ERROR" || result.TrackingID != "user-123" || result.Message != "Database connection failed" {
+		if result.Severity != 3 || result.ProcID != "123" || result.Message != "Database connection failed" {
 			t.Errorf("Unexpected result: %+v", result)
 		}
 	}
@@ -390,10 +525,17 @@ func TestSQLiteStorage_Search_LimitAndOffset(t *testing.T) {
 	// Store multiple test entries
 	for i := 0; i < 10; i++ {
 		entry := &types.LogEntry{
-			Timestamp:  time.Now().Add(time.Duration(i) * time.Minute),
-			Level:      "INFO",
-			TrackingID: "test",
-			Message:    fmt.Sprintf("Message %d", i),
+			Priority:  134,
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: time.Now().Add(time.Duration(i) * time.Minute),
+			Hostname:  "test-host",
+			AppName:   "test-app",
+			ProcID:    fmt.Sprintf("%d", i),
+			MsgID:     "test",
+			Message:   fmt.Sprintf("Message %d", i),
+			CreatedAt: time.Now(),
 		}
 		if err := storage.Store(entry); err != nil {
 			t.Fatalf("Failed to store entry: %v", err)
@@ -430,6 +572,212 @@ func TestSQLiteStorage_Search_LimitAndOffset(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorage_Search_RFC5424Filters(t *testing.T) {
+	storage := setupTestStorage(t)
+	defer cleanupTestStorage(storage)
+
+	// Store test entries with different RFC5424 field values
+	entries := []*types.LogEntry{
+		{
+			Priority:       134, // facility 16, severity 6
+			Facility:       16,
+			Severity:       6,
+			Version:        1,
+			Timestamp:      time.Now(),
+			Hostname:       "web01",
+			AppName:        "nginx",
+			ProcID:         "1234",
+			MsgID:          "access",
+			StructuredData: map[string]interface{}{"user": "john", "action": "login"},
+			Message:        "User login successful",
+			CreatedAt:      time.Now(),
+		},
+		{
+			Priority:       67, // facility 8, severity 3
+			Facility:       8,
+			Severity:       3,
+			Version:        1,
+			Timestamp:      time.Now(),
+			Hostname:       "db01",
+			AppName:        "postgres",
+			ProcID:         "5678",
+			MsgID:          "error",
+			StructuredData: map[string]interface{}{"error_code": 500, "table": "users"},
+			Message:        "Database connection failed",
+			CreatedAt:      time.Now(),
+		},
+		{
+			Priority:       132, // facility 16, severity 4
+			Facility:       16,
+			Severity:       4,
+			Version:        1,
+			Timestamp:      time.Now(),
+			Hostname:       "web01",
+			AppName:        "nginx",
+			ProcID:         "1234",
+			MsgID:          "warning",
+			StructuredData: map[string]interface{}{"response_time": 2000},
+			Message:        "Slow response detected",
+			CreatedAt:      time.Now(),
+		},
+	}
+
+	for _, entry := range entries {
+		if err := storage.Store(entry); err != nil {
+			t.Fatalf("Failed to store entry: %v", err)
+		}
+	}
+
+	testCases := []struct {
+		name     string
+		query    types.SearchQuery
+		expected int
+		validate func(*testing.T, []*types.LogEntry)
+	}{
+		{
+			name: "Filter by facility",
+			query: types.SearchQuery{
+				Facility: func() *int { i := 16; return &i }(),
+			},
+			expected: 2,
+			validate: func(t *testing.T, results []*types.LogEntry) {
+				for _, result := range results {
+					if result.Facility != 16 {
+						t.Errorf("Expected facility 16, got %d", result.Facility)
+					}
+				}
+			},
+		},
+		{
+			name: "Filter by severity",
+			query: types.SearchQuery{
+				Severity: func() *int { i := 3; return &i }(),
+			},
+			expected: 1,
+			validate: func(t *testing.T, results []*types.LogEntry) {
+				if len(results) > 0 && results[0].Severity != 3 {
+					t.Errorf("Expected severity 3, got %d", results[0].Severity)
+				}
+			},
+		},
+		{
+			name: "Filter by min severity (4 and below)",
+			query: types.SearchQuery{
+				MinSeverity: func() *int { i := 4; return &i }(),
+			},
+			expected: 2,
+			validate: func(t *testing.T, results []*types.LogEntry) {
+				for _, result := range results {
+					if result.Severity > 4 {
+						t.Errorf("Expected severity <= 4, got %d", result.Severity)
+					}
+				}
+			},
+		},
+		{
+			name: "Filter by hostname",
+			query: types.SearchQuery{
+				Hostname: "web01",
+			},
+			expected: 2,
+			validate: func(t *testing.T, results []*types.LogEntry) {
+				for _, result := range results {
+					if result.Hostname != "web01" {
+						t.Errorf("Expected hostname 'web01', got '%s'", result.Hostname)
+					}
+				}
+			},
+		},
+		{
+			name: "Filter by app name",
+			query: types.SearchQuery{
+				AppName: "nginx",
+			},
+			expected: 2,
+			validate: func(t *testing.T, results []*types.LogEntry) {
+				for _, result := range results {
+					if result.AppName != "nginx" {
+						t.Errorf("Expected app_name 'nginx', got '%s'", result.AppName)
+					}
+				}
+			},
+		},
+		{
+			name: "Filter by proc ID",
+			query: types.SearchQuery{
+				ProcID: "1234",
+			},
+			expected: 2,
+			validate: func(t *testing.T, results []*types.LogEntry) {
+				for _, result := range results {
+					if result.ProcID != "1234" {
+						t.Errorf("Expected proc_id '1234', got '%s'", result.ProcID)
+					}
+				}
+			},
+		},
+		{
+			name: "Filter by msg ID",
+			query: types.SearchQuery{
+				MsgID: "error",
+			},
+			expected: 1,
+			validate: func(t *testing.T, results []*types.LogEntry) {
+				if len(results) > 0 && results[0].MsgID != "error" {
+					t.Errorf("Expected msg_id 'error', got '%s'", results[0].MsgID)
+				}
+			},
+		},
+		{
+			name: "Filter by structured data query",
+			query: types.SearchQuery{
+				StructuredDataQuery: "john",
+			},
+			expected: 1,
+			validate: func(t *testing.T, results []*types.LogEntry) {
+				if len(results) > 0 {
+					if user, ok := results[0].StructuredData["user"]; !ok || user != "john" {
+						t.Errorf("Expected structured data to contain user 'john'")
+					}
+				}
+			},
+		},
+		{
+			name: "Combined RFC5424 filters",
+			query: types.SearchQuery{
+				Facility: func() *int { i := 16; return &i }(),
+				Hostname: "web01",
+				AppName:  "nginx",
+			},
+			expected: 2,
+			validate: func(t *testing.T, results []*types.LogEntry) {
+				for _, result := range results {
+					if result.Facility != 16 || result.Hostname != "web01" || result.AppName != "nginx" {
+						t.Errorf("Combined filter validation failed for result: %+v", result)
+					}
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			results, err := storage.Search(tc.query)
+			if err != nil {
+				t.Fatalf("Failed to search logs: %v", err)
+			}
+
+			if len(results) != tc.expected {
+				t.Errorf("Expected %d results, got %d", tc.expected, len(results))
+			}
+
+			if tc.validate != nil {
+				tc.validate(t, results)
+			}
+		})
+	}
+}
+
 func TestSQLiteStorage_Cleanup(t *testing.T) {
 	storage := setupTestStorage(t)
 	defer cleanupTestStorage(storage)
@@ -439,16 +787,30 @@ func TestSQLiteStorage_Cleanup(t *testing.T) {
 	// Store entries with different ages
 	entries := []*types.LogEntry{
 		{
-			Timestamp:  now.AddDate(0, 0, -10), // 10 days old
-			Level:      "INFO",
-			TrackingID: "test-1",
-			Message:    "Old message",
+			Priority:  134,
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: now.AddDate(0, 0, -10), // 10 days old
+			Hostname:  "test-host",
+			AppName:   "test-app",
+			ProcID:    "1",
+			MsgID:     "test",
+			Message:   "Old message",
+			CreatedAt: time.Now(),
 		},
 		{
-			Timestamp:  now.AddDate(0, 0, -1), // 1 day old
-			Level:      "INFO",
-			TrackingID: "test-2",
-			Message:    "Recent message",
+			Priority:  134,
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: now.AddDate(0, 0, -1), // 1 day old
+			Hostname:  "test-host",
+			AppName:   "test-app",
+			ProcID:    "2",
+			MsgID:     "test",
+			Message:   "Recent message",
+			CreatedAt: time.Now(),
 		},
 	}
 
