@@ -16,6 +16,8 @@ const App: React.FC = () => {
   const [autoScroll, setAutoScroll] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMoreLogs, setHasMoreLogs] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
   
   // Persistent display options
   const [displayOptions, setDisplayOptions] = useLocalStorage<DisplayOptions>(
@@ -28,7 +30,13 @@ const App: React.FC = () => {
 
   // WebSocket connection
   const handleNewLogEntry = useCallback((logEntry: LogEntry) => {
-    setAllLogs(prev => [...prev, logEntry]);
+    setAllLogs(prev => {
+      // Insert new log in correct chronological position
+      const newLogs = [...prev, logEntry];
+      return newLogs.sort((a, b) => 
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      );
+    });
   }, []);
 
   const { connectionStatus } = useWebSocket({
@@ -98,11 +106,18 @@ const App: React.FC = () => {
   useEffect(() => {
     const loadInitialLogs = async () => {
       try {
+        setError(null);
         const logs = await apiService.fetchLogs(50, 0);
-        setAllLogs(logs);
+        // Sort logs by timestamp to ensure chronological order (oldest first)
+        const sortedLogs = logs.sort((a, b) => 
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        );
+        setAllLogs(sortedLogs);
         setHasMoreLogs(logs.length === 50);
       } catch (error) {
-        console.error('Failed to load initial logs:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Failed to load initial logs';
+        console.error('Failed to load initial logs:', errorMessage);
+        setError(errorMessage);
       }
     };
 
@@ -118,13 +133,28 @@ const App: React.FC = () => {
       const moreLogs = await apiService.fetchLogs(50, allLogs.length);
       
       if (moreLogs.length > 0) {
-        setAllLogs(prev => [...moreLogs, ...prev]);
+        // Sort the new logs by timestamp
+        const sortedMoreLogs = moreLogs.sort((a, b) => 
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        );
+        
+        setAllLogs(prev => {
+          // Combine all logs and sort them properly
+          const combined = [...sortedMoreLogs, ...prev];
+          return combined.sort((a, b) => 
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+          );
+        });
+        
         setHasMoreLogs(moreLogs.length === 50);
       } else {
         setHasMoreLogs(false);
       }
     } catch (error) {
-      console.error('Failed to load more logs:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load more logs';
+      console.error('Failed to load more logs:', errorMessage);
+      setError(errorMessage);
+      // Don't disable hasMoreLogs on error, allow retry
     } finally {
       setIsLoadingMore(false);
     }
@@ -165,6 +195,19 @@ const App: React.FC = () => {
           onDisplayOptionsChange={setDisplayOptions}
           onResetDisplayOptions={handleResetDisplayOptions}
         />
+        
+        {error && (
+          <div className="error-banner">
+            <span className="error-message">{error}</span>
+            <button 
+              className="error-dismiss" 
+              onClick={() => setError(null)}
+              aria-label="Dismiss error"
+            >
+              ×
+            </button>
+          </div>
+        )}
         
         <LogContainer
           logs={filteredLogs}

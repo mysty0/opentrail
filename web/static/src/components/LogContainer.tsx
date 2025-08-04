@@ -25,6 +25,10 @@ export const LogContainer: React.FC<LogContainerProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const lastLogCountRef = useRef(logs.length);
+  const loadMoreTimeoutRef = useRef<number | null>(null);
+  const previousScrollHeightRef = useRef(0);
+  const wasLoadingMoreRef = useRef(false);
+  const autoScrollTimeoutRef = useRef<number | null>(null);
 
   const scrollToBottom = useCallback(() => {
     if (containerRef.current) {
@@ -40,29 +44,71 @@ export const LogContainer: React.FC<LogContainerProps> = ({
     if (!containerRef.current) return;
 
     const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 5;
-    const isAtTop = scrollTop < 50;
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 10; // Increased tolerance
+    const isAtTop = scrollTop < 100;
 
-    // Update auto-scroll state
+    // Update auto-scroll state with some hysteresis to prevent flickering
     if (isAtBottom && !autoScroll) {
       onAutoScrollChange(true);
-    } else if (!isAtBottom && autoScroll) {
+      console.log('Enabling auto-scroll due to near bottom');
+    } else if (!isAtBottom && autoScroll && scrollHeight - scrollTop - clientHeight > 50) {
+      // Only disable auto-scroll if user scrolled significantly up
+      console.log('Disabling auto-scroll due to significant scroll up');
       onAutoScrollChange(false);
     }
 
-    // Load more logs when scrolled near the top
+    // Load more logs when scrolled near the top (with debouncing)
     if (isAtTop && !isLoadingMore && hasMoreLogs && logs.length > 0) {
-      onLoadMore();
+      // Debounce the load more request
+      if (loadMoreTimeoutRef.current) {
+        clearTimeout(loadMoreTimeoutRef.current);
+      }
+      loadMoreTimeoutRef.current = setTimeout(() => {
+        onLoadMore();
+      }, 300);
     }
   }, [autoScroll, onAutoScrollChange, onLoadMore, isLoadingMore, hasMoreLogs, logs.length]);
 
-  // Auto-scroll when new logs arrive
+  // Handle scroll position when logs change
   useEffect(() => {
-    if (autoScroll && logs.length > lastLogCountRef.current) {
-      scrollToBottom();
+    const container = containerRef.current;
+    if (!container) return;
+
+    const logCountChanged = logs.length !== lastLogCountRef.current;
+    const logCountIncreased = logs.length > lastLogCountRef.current;
+    const wasLoadingMore = wasLoadingMoreRef.current;
+
+    if (logCountChanged) {
+      if (wasLoadingMore && !isLoadingMore) {
+        // Just finished loading more logs - preserve scroll position
+        const heightDifference = container.scrollHeight - previousScrollHeightRef.current;
+        container.scrollTop = container.scrollTop + heightDifference;
+        wasLoadingMoreRef.current = false;
+      } else if (autoScroll && logCountIncreased && !wasLoadingMore) {
+        // New logs arrived (not from load-more) and auto-scroll is enabled
+        if (autoScrollTimeoutRef.current) {
+          clearTimeout(autoScrollTimeoutRef.current);
+        }
+        autoScrollTimeoutRef.current = setTimeout(() => {
+          scrollToBottom();
+        }, 10);
+      }
     }
+
     lastLogCountRef.current = logs.length;
-  }, [logs.length, autoScroll, scrollToBottom]);
+    previousScrollHeightRef.current = container.scrollHeight;
+  }, [logs.length, autoScroll, scrollToBottom, isLoadingMore]);
+
+  // Track loading state changes
+  useEffect(() => {
+    if (isLoadingMore && !wasLoadingMoreRef.current) {
+      // Started loading more logs - remember current scroll height
+      if (containerRef.current) {
+        previousScrollHeightRef.current = containerRef.current.scrollHeight;
+      }
+      wasLoadingMoreRef.current = true;
+    }
+  }, [isLoadingMore]);
 
   // Handle window resize
   useEffect(() => {
@@ -75,6 +121,18 @@ export const LogContainer: React.FC<LogContainerProps> = ({
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [autoScroll, scrollToBottom]);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (loadMoreTimeoutRef.current) {
+        clearTimeout(loadMoreTimeoutRef.current);
+      }
+      if (autoScrollTimeoutRef.current) {
+        clearTimeout(autoScrollTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleScrollToBottom = () => {
     scrollToBottom();
@@ -144,7 +202,7 @@ export const LogContainer: React.FC<LogContainerProps> = ({
                 key={`${log.id}-${index}`}
                 logEntry={log}
                 displayOptions={displayOptions}
-                isNew={index === logs.length - 1}
+                isNew={false} // Remove the new animation for now to avoid confusion
               />
             ))
           )}

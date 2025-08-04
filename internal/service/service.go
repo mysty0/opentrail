@@ -24,31 +24,31 @@ const (
 
 // LogService implements the central log processing service
 type LogService struct {
-	parser      interfaces.LogParser
-	storage     interfaces.LogStorage
-	
+	parser  interfaces.LogParser
+	storage interfaces.LogStorage
+
 	// Configuration
 	batchSize    int
 	batchTimeout time.Duration
 	queueSize    int
-	
+
 	// Processing queue and batch management
-	logQueue     chan string
-	batchBuffer  []string
-	batchMutex   sync.Mutex
-	batchTimer   *time.Timer
-	
+	logQueue    chan string
+	batchBuffer []string
+	batchMutex  sync.Mutex
+	batchTimer  *time.Timer
+
 	// Real-time subscriptions
 	subscribers    map[chan *types.LogEntry]bool
 	subscribersMux sync.RWMutex
-	
+
 	// Service lifecycle
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	isRunning  bool
 	runningMux sync.RWMutex
-	
+
 	// Statistics
 	stats      interfaces.ServiceStats
 	statsMutex sync.RWMutex
@@ -57,7 +57,7 @@ type LogService struct {
 // NewLogService creates a new LogService instance
 func NewLogService(parser interfaces.LogParser, storage interfaces.LogStorage) *LogService {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	return &LogService{
 		parser:       parser,
 		storage:      storage,
@@ -100,20 +100,20 @@ func (s *LogService) SetQueueSize(size int) {
 func (s *LogService) Start() error {
 	s.runningMux.Lock()
 	defer s.runningMux.Unlock()
-	
+
 	if s.isRunning {
 		return fmt.Errorf("service is already running")
 	}
-	
+
 	// Start the batch processor
 	s.wg.Add(1)
 	go s.batchProcessor()
-	
+
 	s.isRunning = true
 	s.updateStats(func(stats *interfaces.ServiceStats) {
 		stats.IsRunning = true
 	})
-	
+
 	return nil
 }
 
@@ -121,23 +121,23 @@ func (s *LogService) Start() error {
 func (s *LogService) Stop() error {
 	s.runningMux.Lock()
 	defer s.runningMux.Unlock()
-	
+
 	if !s.isRunning {
 		return nil
 	}
-	
+
 	// Cancel context to signal shutdown
 	s.cancel()
-	
+
 	// Close the log queue to stop accepting new logs
 	close(s.logQueue)
-	
+
 	// Wait for all goroutines to finish
 	s.wg.Wait()
-	
+
 	// Process any remaining logs in the batch buffer
 	s.processBatch()
-	
+
 	// Close all subscriber channels
 	s.subscribersMux.Lock()
 	for ch := range s.subscribers {
@@ -145,13 +145,13 @@ func (s *LogService) Stop() error {
 	}
 	s.subscribers = make(map[chan *types.LogEntry]bool)
 	s.subscribersMux.Unlock()
-	
+
 	s.isRunning = false
 	s.updateStats(func(stats *interfaces.ServiceStats) {
 		stats.IsRunning = false
 		stats.ActiveSubscribers = 0
 	})
-	
+
 	return nil
 }
 
@@ -163,7 +163,7 @@ func (s *LogService) ProcessLog(rawMessage string) error {
 		return fmt.Errorf("service is not running")
 	}
 	s.runningMux.RUnlock()
-	
+
 	select {
 	case s.logQueue <- rawMessage:
 		return nil
@@ -202,7 +202,7 @@ func (s *LogService) GetRecent(limit int) ([]*types.LogEntry, error) {
 func (s *LogService) Subscribe() <-chan *types.LogEntry {
 	s.subscribersMux.Lock()
 	defer s.subscribersMux.Unlock()
-	
+
 	// Check if we've reached the maximum number of subscribers
 	if len(s.subscribers) >= MaxSubscribers {
 		// Return a closed channel to indicate failure
@@ -210,14 +210,14 @@ func (s *LogService) Subscribe() <-chan *types.LogEntry {
 		close(ch)
 		return ch
 	}
-	
+
 	ch := make(chan *types.LogEntry, 100) // Buffered channel to prevent blocking
 	s.subscribers[ch] = true
-	
+
 	s.updateStats(func(stats *interfaces.ServiceStats) {
 		stats.ActiveSubscribers = len(s.subscribers)
 	})
-	
+
 	return ch
 }
 
@@ -225,13 +225,13 @@ func (s *LogService) Subscribe() <-chan *types.LogEntry {
 func (s *LogService) Unsubscribe(subscription <-chan *types.LogEntry) {
 	s.subscribersMux.Lock()
 	defer s.subscribersMux.Unlock()
-	
+
 	// Find and remove the subscription channel
 	for ch := range s.subscribers {
 		if ch == subscription {
 			delete(s.subscribers, ch)
 			close(ch)
-			
+
 			s.updateStats(func(stats *interfaces.ServiceStats) {
 				stats.ActiveSubscribers = len(s.subscribers)
 			})
@@ -244,20 +244,20 @@ func (s *LogService) Unsubscribe(subscription <-chan *types.LogEntry) {
 func (s *LogService) GetStats() interfaces.ServiceStats {
 	s.statsMutex.RLock()
 	defer s.statsMutex.RUnlock()
-	
+
 	stats := s.stats
 	stats.QueueSize = len(s.logQueue)
-	
+
 	return stats
 }
 
 // batchProcessor runs in a separate goroutine to process logs in batches
 func (s *LogService) batchProcessor() {
 	defer s.wg.Done()
-	
+
 	s.batchTimer = time.NewTimer(s.batchTimeout)
 	defer s.batchTimer.Stop()
-	
+
 	for {
 		select {
 		case rawMessage, ok := <-s.logQueue:
@@ -265,17 +265,17 @@ func (s *LogService) batchProcessor() {
 				// Channel closed, process remaining batch and exit
 				return
 			}
-			
+
 			s.batchMutex.Lock()
 			s.batchBuffer = append(s.batchBuffer, rawMessage)
-			
+
 			// Process batch if it's full
 			if len(s.batchBuffer) >= s.batchSize {
 				s.processBatch()
 				s.resetBatchTimer()
 			}
 			s.batchMutex.Unlock()
-			
+
 		case <-s.batchTimer.C:
 			// Timeout reached, process current batch
 			s.batchMutex.Lock()
@@ -284,7 +284,7 @@ func (s *LogService) batchProcessor() {
 			}
 			s.resetBatchTimer()
 			s.batchMutex.Unlock()
-			
+
 		case <-s.ctx.Done():
 			// Service is shutting down
 			return
@@ -297,11 +297,11 @@ func (s *LogService) processBatch() {
 	if len(s.batchBuffer) == 0 {
 		return
 	}
-	
+
 	batch := make([]string, len(s.batchBuffer))
 	copy(batch, s.batchBuffer)
 	s.batchBuffer = s.batchBuffer[:0] // Clear the buffer
-	
+
 	// Process each log in the batch
 	for _, rawMessage := range batch {
 		if err := s.processLogMessage(rawMessage); err != nil {
@@ -324,15 +324,15 @@ func (s *LogService) processLogMessage(rawMessage string) error {
 	if err != nil {
 		return fmt.Errorf("failed to parse log message: %w", err)
 	}
-	
+
 	// Store the log entry
 	if err := s.storage.Store(logEntry); err != nil {
 		return fmt.Errorf("failed to store log entry: %w", err)
 	}
-	
+
 	// Notify subscribers
 	s.notifySubscribers(logEntry)
-	
+
 	return nil
 }
 
@@ -340,7 +340,7 @@ func (s *LogService) processLogMessage(rawMessage string) error {
 func (s *LogService) notifySubscribers(logEntry *types.LogEntry) {
 	s.subscribersMux.RLock()
 	defer s.subscribersMux.RUnlock()
-	
+
 	for ch := range s.subscribers {
 		select {
 		case ch <- logEntry:

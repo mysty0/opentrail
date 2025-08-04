@@ -17,22 +17,41 @@ export class ApiService {
         offset: offset.toString()
       });
 
-      const response = await fetch(`/api/logs?${params}`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+      const response = await fetch(`/api/logs?${params}`, {
+        signal: controller.signal,
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      clearTimeout(timeoutId);
       
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const errorText = await response.text().catch(() => 'Unknown error');
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
 
       const data: ApiResponse<LogEntry[]> = await response.json();
       
-      if (!data.success || !data.data) {
-        throw new Error(data.error || 'Failed to fetch logs');
+      if (!data.success) {
+        throw new Error(data.error || 'API returned unsuccessful response');
       }
 
-      return data.data;
+      return data.data || [];
     } catch (error) {
-      console.error('Error fetching logs:', error);
-      throw error;
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          throw new Error('Request timeout - please try again');
+        }
+        console.error('Error fetching logs:', error.message);
+        throw new Error(`Failed to fetch logs: ${error.message}`);
+      }
+      console.error('Unknown error fetching logs:', error);
+      throw new Error('Failed to fetch logs: Unknown error');
     }
   }
 }

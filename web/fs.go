@@ -5,7 +5,7 @@ import (
 	"io/fs"
 )
 
-//go:embed static
+//go:embed static/dist
 var staticFS embed.FS
 
 // StaticFS provides access to static files (CSS, JS, etc.)
@@ -17,6 +17,13 @@ func init() {
 	// Use fs.Sub to mount the static/dist directory at the root level
 	// This ensures consistent behavior between embedded and filesystem modes
 	var err error
+	var files []fs.DirEntry
+	println("init")
+	files, err = staticFS.ReadDir(".")
+	for _, file := range files {
+		println(file.Name())
+	}
+
 	StaticFS, err = fs.Sub(staticFS, "static/dist")
 	if err != nil {
 		panic("failed to create static filesystem: " + err.Error())
