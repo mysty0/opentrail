@@ -108,7 +108,9 @@
   - Write unit tests for error handling scenarios
   - _Requirements: 1.4, 2.4_
 
-- [-] 10. Create integration tests and benchmarks
+- [x] 10. Create integration tests and benchmarks
+
+
 
 
 
