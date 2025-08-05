@@ -1,5 +1,9 @@
 *.db
 *.exe
+build/
+*.tar.gz
+*.db-shm
+*.db-wal
 
 # Node.js dependencies and build artifacts
 web/static/node_modules/

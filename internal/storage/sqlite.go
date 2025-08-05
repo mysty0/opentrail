@@ -7,9 +7,10 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
 	"opentrail/internal/interfaces"
 	"opentrail/internal/types"
+
+	_ "modernc.org/sqlite"
 )
 
 // SQLiteStorage implements the LogStorage interface using SQLite with FTS5
@@ -25,12 +26,58 @@ func NewSQLiteStorage(dbPath string) (interfaces.LogStorage, error) {
 	}
 
 	storage := &SQLiteStorage{db: db}
+	if err := storage.configureWALMode(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to configure WAL mode: %w", err)
+	}
+
 	if err := storage.initializeDatabase(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
 	return storage, nil
+}
+
+// configureWALMode configures SQLite to use WAL mode with optimized settings
+func (s *SQLiteStorage) configureWALMode() error {
+	// Enable WAL mode for better concurrency
+	if _, err := s.db.Exec("PRAGMA journal_mode = WAL"); err != nil {
+		return fmt.Errorf("failed to enable WAL mode: %w", err)
+	}
+
+	// Set synchronous mode to NORMAL for better performance while maintaining durability
+	// NORMAL ensures WAL is synced on checkpoint, but not on every transaction
+	if _, err := s.db.Exec("PRAGMA synchronous = NORMAL"); err != nil {
+		return fmt.Errorf("failed to set synchronous mode: %w", err)
+	}
+
+	// Configure WAL auto-checkpoint to run every 1000 pages
+	// This prevents WAL files from growing too large
+	if _, err := s.db.Exec("PRAGMA wal_autocheckpoint = 1000"); err != nil {
+		return fmt.Errorf("failed to set WAL auto-checkpoint: %w", err)
+	}
+
+	// Set busy timeout to 5 seconds to handle concurrent access
+	if _, err := s.db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		return fmt.Errorf("failed to set busy timeout: %w", err)
+	}
+
+	// Enable foreign key constraints
+	if _, err := s.db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		return fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
+
+	// Verify WAL mode is enabled
+	var journalMode string
+	if err := s.db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
+		return fmt.Errorf("failed to verify journal mode: %w", err)
+	}
+	if journalMode != "wal" {
+		return fmt.Errorf("failed to enable WAL mode, current mode: %s", journalMode)
+	}
+
+	return nil
 }
 
 // initializeDatabase creates the necessary tables and indexes
@@ -146,12 +193,27 @@ func (s *SQLiteStorage) Store(entry *types.LogEntry) error {
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
-	result, err := s.db.Exec(query, 
+	result, err := s.db.Exec(query,
 		entry.Priority, entry.Facility, entry.Severity, entry.Version,
 		entry.Timestamp, entry.Hostname, entry.AppName, entry.ProcID, entry.MsgID,
 		structuredDataJSON, entry.Message)
 	if err != nil {
-		return fmt.Errorf("failed to store log entry: %w", err)
+		// Check if this is a WAL-related error and attempt recovery
+		if s.isWALError(err) {
+			if recoveryErr := s.recoverFromWALCorruption(); recoveryErr != nil {
+				return fmt.Errorf("failed to store log entry and WAL recovery failed: %w (original: %v)", recoveryErr, err)
+			}
+			// Retry the operation after recovery
+			result, err = s.db.Exec(query,
+				entry.Priority, entry.Facility, entry.Severity, entry.Version,
+				entry.Timestamp, entry.Hostname, entry.AppName, entry.ProcID, entry.MsgID,
+				structuredDataJSON, entry.Message)
+			if err != nil {
+				return fmt.Errorf("failed to store log entry after WAL recovery: %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to store log entry: %w", err)
+		}
 	}
 
 	id, err := result.LastInsertId()
@@ -264,7 +326,7 @@ func (s *SQLiteStorage) Search(query types.SearchQuery) ([]*types.LogEntry, erro
 	for rows.Next() {
 		entry := &types.LogEntry{}
 		var structuredDataJSON sql.NullString
-		
+
 		err := rows.Scan(&entry.ID, &entry.Priority, &entry.Facility, &entry.Severity, &entry.Version,
 			&entry.Timestamp, &entry.Hostname, &entry.AppName, &entry.ProcID, &entry.MsgID,
 			&structuredDataJSON, &entry.Message, &entry.CreatedAt)
@@ -309,7 +371,7 @@ func (s *SQLiteStorage) GetRecent(limit int) ([]*types.LogEntry, error) {
 	for rows.Next() {
 		entry := &types.LogEntry{}
 		var structuredDataJSON sql.NullString
-		
+
 		err := rows.Scan(&entry.ID, &entry.Priority, &entry.Facility, &entry.Severity, &entry.Version,
 			&entry.Timestamp, &entry.Hostname, &entry.AppName, &entry.ProcID, &entry.MsgID,
 			&structuredDataJSON, &entry.Message, &entry.CreatedAt)
@@ -338,7 +400,7 @@ func (s *SQLiteStorage) GetRecent(limit int) ([]*types.LogEntry, error) {
 // Cleanup removes log entries older than the specified retention period
 func (s *SQLiteStorage) Cleanup(retentionDays int) error {
 	cutoffTime := time.Now().AddDate(0, 0, -retentionDays)
-	
+
 	query := "DELETE FROM logs WHERE timestamp < ?"
 	result, err := s.db.Exec(query, cutoffTime)
 	if err != nil {
@@ -360,7 +422,69 @@ func (s *SQLiteStorage) Cleanup(retentionDays int) error {
 	return nil
 }
 
-// Close closes the database connection
+// isWALError checks if an error is related to WAL corruption or issues
+func (s *SQLiteStorage) isWALError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := strings.ToLower(err.Error())
+	walErrorPatterns := []string{
+		"wal",
+		"checkpoint",
+		"database is locked",
+		"database disk image is malformed",
+		"disk i/o error",
+		"attempt to write a readonly database",
+	}
+
+	for _, pattern := range walErrorPatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// checkpointWAL performs a WAL checkpoint to ensure data is written to main database
+func (s *SQLiteStorage) checkpointWAL() error {
+	// Perform a RESTART checkpoint to ensure all WAL data is moved to main database
+	if _, err := s.db.Exec("PRAGMA wal_checkpoint(RESTART)"); err != nil {
+		return fmt.Errorf("failed to checkpoint WAL: %w", err)
+	}
+	return nil
+}
+
+// recoverFromWALCorruption attempts to recover from WAL file corruption
+func (s *SQLiteStorage) recoverFromWALCorruption() error {
+	// First, try to checkpoint any valid data
+	if err := s.checkpointWAL(); err != nil {
+		// If checkpoint fails, try to truncate WAL and start fresh
+		if _, err := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+			return fmt.Errorf("failed to truncate corrupted WAL: %w", err)
+		}
+	}
+
+	// Verify database integrity after recovery
+	var integrityResult string
+	if err := s.db.QueryRow("PRAGMA integrity_check").Scan(&integrityResult); err != nil {
+		return fmt.Errorf("failed to check database integrity: %w", err)
+	}
+	if integrityResult != "ok" {
+		return fmt.Errorf("database integrity check failed: %s", integrityResult)
+	}
+
+	return nil
+}
+
+// Close closes the database connection with proper WAL cleanup
 func (s *SQLiteStorage) Close() error {
+	// Perform final checkpoint before closing
+	if err := s.checkpointWAL(); err != nil {
+		// Log the error but don't fail the close operation
+		fmt.Printf("Warning: failed to checkpoint WAL during close: %v\n", err)
+	}
+
 	return s.db.Close()
 }

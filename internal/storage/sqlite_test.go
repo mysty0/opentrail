@@ -35,17 +35,17 @@ func TestSQLiteStorage_Store(t *testing.T) {
 	defer cleanupTestStorage(storage)
 
 	entry := &types.LogEntry{
-		Priority:   134, // facility 16, severity 6
-		Facility:   16,
-		Severity:   6,
-		Version:    1,
-		Timestamp:  time.Now(),
-		Hostname:   "test-host",
-		AppName:    "test-app",
-		ProcID:     "123",
-		MsgID:      "test",
-		Message:    "Test log message",
-		CreatedAt:  time.Now(),
+		Priority:  134, // facility 16, severity 6
+		Facility:  16,
+		Severity:  6,
+		Version:   1,
+		Timestamp: time.Now(),
+		Hostname:  "test-host",
+		AppName:   "test-app",
+		ProcID:    "123",
+		MsgID:     "test",
+		Message:   "Test log message",
+		CreatedAt: time.Now(),
 	}
 
 	err := storage.Store(entry)
@@ -365,7 +365,7 @@ func TestSQLiteStorage_Search_TimeRange(t *testing.T) {
 	defer cleanupTestStorage(storage)
 
 	now := time.Now()
-	
+
 	// Store test entries with different timestamps
 	entries := []*types.LogEntry{
 		{
@@ -443,7 +443,7 @@ func TestSQLiteStorage_Search_CombinedFilters(t *testing.T) {
 	defer cleanupTestStorage(storage)
 
 	now := time.Now()
-	
+
 	// Store test entries
 	entries := []*types.LogEntry{
 		{
@@ -783,7 +783,7 @@ func TestSQLiteStorage_Cleanup(t *testing.T) {
 	defer cleanupTestStorage(storage)
 
 	now := time.Now()
-	
+
 	// Store entries with different ages
 	entries := []*types.LogEntry{
 		{
@@ -861,5 +861,322 @@ func setupTestStorage(t *testing.T) *SQLiteStorage {
 func cleanupTestStorage(storage *SQLiteStorage) {
 	if storage != nil {
 		storage.Close()
+	}
+}
+
+// WAL Mode Configuration Tests
+
+func TestSQLiteStorage_WALModeConfiguration(t *testing.T) {
+	storage := setupTestStorage(t)
+	defer cleanupTestStorage(storage)
+
+	// Test that WAL mode is enabled
+	var journalMode string
+	err := storage.db.QueryRow("PRAGMA journal_mode").Scan(&journalMode)
+	if err != nil {
+		t.Fatalf("Failed to query journal mode: %v", err)
+	}
+
+	if journalMode != "wal" {
+		t.Errorf("Expected journal mode 'wal', got '%s'", journalMode)
+	}
+}
+
+func TestSQLiteStorage_WALSynchronousMode(t *testing.T) {
+	storage := setupTestStorage(t)
+	defer cleanupTestStorage(storage)
+
+	// Test that synchronous mode is set to NORMAL
+	var synchronousMode int
+	err := storage.db.QueryRow("PRAGMA synchronous").Scan(&synchronousMode)
+	if err != nil {
+		t.Fatalf("Failed to query synchronous mode: %v", err)
+	}
+
+	// NORMAL mode should be 1
+	if synchronousMode != 1 {
+		t.Errorf("Expected synchronous mode 1 (NORMAL), got %d", synchronousMode)
+	}
+}
+
+func TestSQLiteStorage_WALAutoCheckpoint(t *testing.T) {
+	storage := setupTestStorage(t)
+	defer cleanupTestStorage(storage)
+
+	// Test that WAL auto-checkpoint is configured
+	var autoCheckpoint int
+	err := storage.db.QueryRow("PRAGMA wal_autocheckpoint").Scan(&autoCheckpoint)
+	if err != nil {
+		t.Fatalf("Failed to query WAL auto-checkpoint: %v", err)
+	}
+
+	if autoCheckpoint != 1000 {
+		t.Errorf("Expected WAL auto-checkpoint 1000, got %d", autoCheckpoint)
+	}
+}
+
+func TestSQLiteStorage_BusyTimeout(t *testing.T) {
+	storage := setupTestStorage(t)
+	defer cleanupTestStorage(storage)
+
+	// Test that busy timeout is configured
+	var busyTimeout int
+	err := storage.db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout)
+	if err != nil {
+		t.Fatalf("Failed to query busy timeout: %v", err)
+	}
+
+	if busyTimeout != 5000 {
+		t.Errorf("Expected busy timeout 5000ms, got %d", busyTimeout)
+	}
+}
+
+func TestSQLiteStorage_ForeignKeys(t *testing.T) {
+	storage := setupTestStorage(t)
+	defer cleanupTestStorage(storage)
+
+	// Test that foreign keys are enabled
+	var foreignKeys int
+	err := storage.db.QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys)
+	if err != nil {
+		t.Fatalf("Failed to query foreign keys: %v", err)
+	}
+
+	if foreignKeys != 1 {
+		t.Errorf("Expected foreign keys enabled (1), got %d", foreignKeys)
+	}
+}
+
+func TestSQLiteStorage_ConcurrentReadWrite(t *testing.T) {
+	storage := setupTestStorage(t)
+	defer cleanupTestStorage(storage)
+
+	// Test concurrent read and write operations (WAL mode benefit)
+	done := make(chan bool, 2)
+	errors := make(chan error, 2)
+
+	// Start a writer goroutine
+	go func() {
+		defer func() { done <- true }()
+		for i := 0; i < 10; i++ {
+			entry := &types.LogEntry{
+				Priority:  134,
+				Facility:  16,
+				Severity:  6,
+				Version:   1,
+				Timestamp: time.Now(),
+				Hostname:  "test-host",
+				AppName:   "test-app",
+				ProcID:    fmt.Sprintf("writer-%d", i),
+				MsgID:     "test",
+				Message:   fmt.Sprintf("Writer message %d", i),
+				CreatedAt: time.Now(),
+			}
+			if err := storage.Store(entry); err != nil {
+				errors <- fmt.Errorf("writer error: %w", err)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	// Start a reader goroutine
+	go func() {
+		defer func() { done <- true }()
+		for i := 0; i < 10; i++ {
+			_, err := storage.GetRecent(5)
+			if err != nil {
+				errors <- fmt.Errorf("reader error: %w", err)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	// Wait for both goroutines to complete
+	completedCount := 0
+	for completedCount < 2 {
+		select {
+		case <-done:
+			completedCount++
+		case err := <-errors:
+			t.Fatalf("Concurrent operation failed: %v", err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("Concurrent operations timed out")
+		}
+	}
+}
+
+func TestSQLiteStorage_CheckpointWAL(t *testing.T) {
+	storage := setupTestStorage(t)
+	defer cleanupTestStorage(storage)
+
+	// Store some entries to create WAL data
+	for i := 0; i < 5; i++ {
+		entry := &types.LogEntry{
+			Priority:  134,
+			Facility:  16,
+			Severity:  6,
+			Version:   1,
+			Timestamp: time.Now(),
+			Hostname:  "test-host",
+			AppName:   "test-app",
+			ProcID:    fmt.Sprintf("%d", i),
+			MsgID:     "test",
+			Message:   fmt.Sprintf("Test message %d", i),
+			CreatedAt: time.Now(),
+		}
+		if err := storage.Store(entry); err != nil {
+			t.Fatalf("Failed to store entry: %v", err)
+		}
+	}
+
+	// Test manual checkpoint
+	err := storage.checkpointWAL()
+	if err != nil {
+		t.Errorf("Failed to checkpoint WAL: %v", err)
+	}
+
+	// Verify data is still accessible after checkpoint
+	recent, err := storage.GetRecent(5)
+	if err != nil {
+		t.Fatalf("Failed to get recent logs after checkpoint: %v", err)
+	}
+
+	if len(recent) != 5 {
+		t.Errorf("Expected 5 entries after checkpoint, got %d", len(recent))
+	}
+}
+
+func TestSQLiteStorage_WALErrorDetection(t *testing.T) {
+	storage := setupTestStorage(t)
+	defer cleanupTestStorage(storage)
+
+	testCases := []struct {
+		name     string
+		error    error
+		expected bool
+	}{
+		{
+			name:     "WAL error",
+			error:    fmt.Errorf("wal file corrupted"),
+			expected: true,
+		},
+		{
+			name:     "Checkpoint error",
+			error:    fmt.Errorf("checkpoint failed"),
+			expected: true,
+		},
+		{
+			name:     "Database locked error",
+			error:    fmt.Errorf("database is locked"),
+			expected: true,
+		},
+		{
+			name:     "Disk I/O error",
+			error:    fmt.Errorf("disk i/o error occurred"),
+			expected: true,
+		},
+		{
+			name:     "Malformed database error",
+			error:    fmt.Errorf("database disk image is malformed"),
+			expected: true,
+		},
+		{
+			name:     "Regular SQL error",
+			error:    fmt.Errorf("syntax error"),
+			expected: false,
+		},
+		{
+			name:     "Nil error",
+			error:    nil,
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := storage.isWALError(tc.error)
+			if result != tc.expected {
+				t.Errorf("Expected isWALError to return %v for error '%v', got %v", tc.expected, tc.error, result)
+			}
+		})
+	}
+}
+
+func TestSQLiteStorage_WALRecovery(t *testing.T) {
+	storage := setupTestStorage(t)
+	defer cleanupTestStorage(storage)
+
+	// Store some data first
+	entry := &types.LogEntry{
+		Priority:  134,
+		Facility:  16,
+		Severity:  6,
+		Version:   1,
+		Timestamp: time.Now(),
+		Hostname:  "test-host",
+		AppName:   "test-app",
+		ProcID:    "1",
+		MsgID:     "test",
+		Message:   "Test message before recovery",
+		CreatedAt: time.Now(),
+	}
+	if err := storage.Store(entry); err != nil {
+		t.Fatalf("Failed to store initial entry: %v", err)
+	}
+
+	// Test WAL recovery (this should not fail on a healthy database)
+	err := storage.recoverFromWALCorruption()
+	if err != nil {
+		t.Errorf("WAL recovery failed on healthy database: %v", err)
+	}
+
+	// Verify data is still accessible after recovery
+	recent, err := storage.GetRecent(1)
+	if err != nil {
+		t.Fatalf("Failed to get recent logs after recovery: %v", err)
+	}
+
+	if len(recent) != 1 {
+		t.Errorf("Expected 1 entry after recovery, got %d", len(recent))
+	}
+
+	if len(recent) > 0 && recent[0].Message != "Test message before recovery" {
+		t.Errorf("Data integrity check failed after recovery")
+	}
+}
+
+func TestSQLiteStorage_CloseWithCheckpoint(t *testing.T) {
+	storage := setupTestStorage(t)
+
+	// Store some data to create WAL content
+	entry := &types.LogEntry{
+		Priority:  134,
+		Facility:  16,
+		Severity:  6,
+		Version:   1,
+		Timestamp: time.Now(),
+		Hostname:  "test-host",
+		AppName:   "test-app",
+		ProcID:    "1",
+		MsgID:     "test",
+		Message:   "Test message for close",
+		CreatedAt: time.Now(),
+	}
+	if err := storage.Store(entry); err != nil {
+		t.Fatalf("Failed to store entry: %v", err)
+	}
+
+	// Test that Close() performs checkpoint and closes cleanly
+	err := storage.Close()
+	if err != nil {
+		t.Errorf("Failed to close storage with checkpoint: %v", err)
+	}
+
+	// Verify database is closed by trying to query (should fail)
+	_, err = storage.GetRecent(1)
+	if err == nil {
+		t.Error("Expected error when querying closed database")
 	}
 }
