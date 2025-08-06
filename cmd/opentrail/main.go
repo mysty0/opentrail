@@ -129,7 +129,7 @@ func (app *Application) initializeComponents() error {
 	app.storage = sqliteStorage
 
 	// Initialize parser
-	logParser := parser.NewRFC5424Parser(false)
+	logParser := parser.NewRFC5424Parser(true)
 	if err := logParser.SetFormat(app.config.LogFormat); err != nil {
 		return fmt.Errorf("failed to set log format: %w", err)
 	}

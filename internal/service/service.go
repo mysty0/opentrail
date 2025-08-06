@@ -15,7 +15,7 @@ const (
 	// DefaultBatchSize is the default number of logs to process in a batch
 	DefaultBatchSize = 100
 	// DefaultBatchTimeout is the default timeout for batch processing
-	DefaultBatchTimeout = 1 * time.Second
+	DefaultBatchTimeout = 100 * time.Millisecond
 	// DefaultQueueSize is the default size of the processing queue
 	DefaultQueueSize = 10000
 	// MaxSubscribers is the maximum number of concurrent subscribers
@@ -277,6 +277,7 @@ func (s *LogService) batchProcessor() {
 			s.batchMutex.Unlock()
 
 		case <-s.batchTimer.C:
+			//fmt.Println("batch timer", s.batchTimeout)
 			// Timeout reached, process current batch
 			s.batchMutex.Lock()
 			if len(s.batchBuffer) > 0 {
@@ -301,7 +302,7 @@ func (s *LogService) processBatch() {
 	batch := make([]string, len(s.batchBuffer))
 	copy(batch, s.batchBuffer)
 	s.batchBuffer = s.batchBuffer[:0] // Clear the buffer
-
+	//fmt.Println("processing batch size: ", len(batch))
 	// Process each log in the batch
 	for _, rawMessage := range batch {
 		if err := s.processLogMessage(rawMessage); err != nil {
@@ -315,6 +316,7 @@ func (s *LogService) processBatch() {
 			})
 		}
 	}
+	//fmt.Println("processing batch done")
 }
 
 // processLogMessage processes a single log message

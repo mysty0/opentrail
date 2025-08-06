@@ -318,6 +318,11 @@ body {
     padding: 16px;
     font-size: 13px;
     line-height: 1.5;
+    /* Performance optimizations */
+    will-change: scroll-position;
+    transform: translateZ(0); /* Force hardware acceleration */
+    -webkit-overflow-scrolling: touch; /* Smooth scrolling on mobile */
+    scroll-behavior: auto; /* Disable smooth scrolling for performance */
 }
 
 /* Custom scrollbar */
@@ -346,6 +351,9 @@ body {
     padding: 8px 0;
     border-bottom: 1px solid #21262d;
     transition: background-color 0.2s ease;
+    /* Performance optimizations */
+    contain: layout style paint;
+    transform: translateZ(0);
 }
 
 .log-entry:hover {

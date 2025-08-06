@@ -28,10 +28,9 @@ export const LogEntry: React.FC<LogEntryProps> = ({
 
   const hasStructuredData = logEntry.structured_data && 
     Object.keys(logEntry.structured_data).length > 0;
-
   return (
     <div className={`log-entry${isNew ? ' new' : ''}`}>
-      <div className="log-entry-header">
+      <div className="log-entry-line">
         {displayOptions.showTimestamp && (
           <>
             <span className="timestamp">{timestamp}</span>
@@ -82,11 +81,14 @@ export const LogEntry: React.FC<LogEntryProps> = ({
         )}
         
         {displayOptions.showMsgId && (
-          <span className="msg-id">{msgId}</span>
+          <>
+            <span className="msg-id">{msgId}</span>
+            {displayOptions.showSeparators && <span className="field-separator">|</span>}
+          </>
         )}
+        
+        <span className="log-entry-message">{message}</span>
       </div>
-      
-      <div className="log-entry-message">{message}</div>
       
       {hasStructuredData && (
         <div className="log-entry-structured-data">
@@ -104,13 +106,13 @@ export const LogEntry: React.FC<LogEntryProps> = ({
                 <ChevronRight size={12} />
                 Show Structured Data
               </>
-            )}
+      )}
           </button>
           
           {showStructuredData && (
             <div className="structured-data-content">
               <pre>{JSON.stringify(logEntry.structured_data, null, 2)}</pre>
-            </div>
+    </div>
           )}
         </div>
       )}

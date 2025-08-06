@@ -630,24 +630,24 @@ func (s *BatchedSQLiteStorage) Store(entry *types.LogEntry) error {
 		// Request queued successfully
 		// For performance, use a short timeout - if batch processes quickly we get ID
 		// If not, we timeout but write is still queued (fire-and-forget for performance)
-		timeout := s.config.BatchTimeout + 20*time.Millisecond
+		// timeout := s.config.BatchTimeout + 20*time.Millisecond
 
-		queueStart := time.Now()
-		id, err := req.waitForResult(timeout)
-		s.metrics.RecordQueueWaitTime(time.Since(queueStart))
+		// queueStart := time.Now()
+		// id, err := req.waitForResult(timeout)
+		// s.metrics.RecordQueueWaitTime(time.Since(queueStart))
 
-		duration := time.Since(start)
-		s.metrics.RecordWriteRequest(duration, err)
+		// duration := time.Since(start)
+		// s.metrics.RecordWriteRequest(duration, err)
 
-		if err != nil {
-			// Timeout or error - but write is still queued, so return success
-			// Set placeholder ID for compatibility
-			entry.ID = 0
-			return nil
-		}
+		// if err != nil {
+		// 	// Timeout or error - but write is still queued, so return success
+		// 	// Set placeholder ID for compatibility
+		// 	entry.ID = 0
+		// 	return nil
+		// }
 
-		// Got ID successfully
-		entry.ID = id
+		// // Got ID successfully
+		// entry.ID = id
 		return nil
 
 	default:

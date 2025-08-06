@@ -39,6 +39,11 @@ type RemoteClient struct {
 	httpClient  *http.Client
 }
 
+type TCPWriter struct {
+	conn net.Conn
+	mu   sync.Mutex
+}
+
 func main() {
 	flag.Parse()
 
@@ -145,6 +150,22 @@ func runRemoteLoadTest(ctx context.Context, client *RemoteClient, monitor *metri
 
 func runRemoteWriter(ctx context.Context, client *RemoteClient, monitor *metrics.PerformanceMonitor, writerID int) {
 	count := 0
+	var tcpWriter *TCPWriter
+
+	// For TCP protocol, establish persistent connection
+	if *protocol == "tcp" {
+		conn, err := net.DialTimeout("tcp", client.tcpAddr, 5*time.Second)
+		if err != nil {
+			log.Printf("Writer %d failed to establish TCP connection: %v", writerID, err)
+			return
+		}
+		tcpWriter = &TCPWriter{conn: conn}
+		defer func() {
+			tcpWriter.conn.Close()
+			log.Printf("Writer %d closed TCP connection after %d writes", writerID, count)
+		}()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -159,7 +180,7 @@ func runRemoteWriter(ctx context.Context, client *RemoteClient, monitor *metrics
 			if *protocol == "http" {
 				err = client.sendLogHTTP(entry)
 			} else {
-				err = client.sendLogTCP(entry)
+				err = tcpWriter.sendLog(entry)
 			}
 
 			latency := time.Since(start)
@@ -167,6 +188,18 @@ func runRemoteWriter(ctx context.Context, client *RemoteClient, monitor *metrics
 
 			if err != nil {
 				log.Printf("Writer %d error: %v", writerID, err)
+				// For TCP, try to reconnect on error
+				if *protocol == "tcp" && tcpWriter != nil {
+					log.Printf("Writer %d attempting to reconnect TCP connection", writerID)
+					tcpWriter.conn.Close()
+					if conn, reconnectErr := net.DialTimeout("tcp", client.tcpAddr, 5*time.Second); reconnectErr == nil {
+						tcpWriter.conn = conn
+						log.Printf("Writer %d successfully reconnected", writerID)
+					} else {
+						log.Printf("Writer %d failed to reconnect: %v", writerID, reconnectErr)
+						return
+					}
+				}
 			} else {
 				count++
 			}
@@ -236,6 +269,15 @@ func (c *RemoteClient) sendLogTCP(entry *types.LogEntry) error {
 
 	syslogMsg := formatAsSyslog(entry)
 	_, err = conn.Write([]byte(syslogMsg + "\n"))
+	return err
+}
+
+func (w *TCPWriter) sendLog(entry *types.LogEntry) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	syslogMsg := formatAsSyslog(entry)
+	_, err := w.conn.Write([]byte(syslogMsg + "\n"))
 	return err
 }
 

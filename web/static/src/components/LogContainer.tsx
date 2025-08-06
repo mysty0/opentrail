@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { ArrowDown } from 'lucide-react';
 import { LogEntry } from './LogEntry';
 import { getCurrentTime } from '../utils/formatters';
@@ -24,120 +24,86 @@ export const LogContainer: React.FC<LogContainerProps> = ({
   hasMoreLogs
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const lastLogCountRef = useRef(logs.length);
-  const loadMoreTimeoutRef = useRef<number | null>(null);
-  const previousScrollHeightRef = useRef(0);
-  const wasLoadingMoreRef = useRef(false);
-  const autoScrollTimeoutRef = useRef<number | null>(null);
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
+  const scrollTimeoutRef = useRef<number | null>(null);
+  const lastScrollTop = useRef(0);
+  const previousScrollHeight = useRef(0);
 
-  const scrollToBottom = useCallback(() => {
-    if (containerRef.current) {
-      requestAnimationFrame(() => {
-        if (containerRef.current) {
-          containerRef.current.scrollTop = containerRef.current.scrollHeight;
-        }
-      });
-    }
-  }, []);
 
+
+  // Optimized scroll handler with debouncing
   const handleScroll = useCallback(() => {
     if (!containerRef.current) return;
 
     const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 10; // Increased tolerance
-    const isAtTop = scrollTop < 100;
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 5;
+    const isAtTop = scrollTop < 50;
 
-    // Update auto-scroll state with some hysteresis to prevent flickering
-    if (isAtBottom && !autoScroll) {
-      onAutoScrollChange(true);
-      console.log('Enabling auto-scroll due to near bottom');
-    } else if (!isAtBottom && autoScroll && scrollHeight - scrollTop - clientHeight > 50) {
-      // Only disable auto-scroll if user scrolled significantly up
-      console.log('Disabling auto-scroll due to significant scroll up');
-      onAutoScrollChange(false);
+    // Clear existing timeout
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
     }
 
-    // Load more logs when scrolled near the top (with debouncing)
-    if (isAtTop && !isLoadingMore && hasMoreLogs && logs.length > 0) {
-      // Debounce the load more request
-      if (loadMoreTimeoutRef.current) {
-        clearTimeout(loadMoreTimeoutRef.current);
+    // Mark as user scrolling
+    setIsUserScrolling(true);
+
+    // Debounced scroll handling
+    scrollTimeoutRef.current = setTimeout(() => {
+      setIsUserScrolling(false);
+      
+      // Update auto-scroll state
+      if (isAtBottom && !autoScroll) {
+        onAutoScrollChange(true);
+      } else if (!isAtBottom && autoScroll) {
+        onAutoScrollChange(false);
       }
-      loadMoreTimeoutRef.current = setTimeout(() => {
+
+      // Load more when at top
+      if (isAtTop && !isLoadingMore && hasMoreLogs && logs.length > 0) {
         onLoadMore();
-      }, 300);
-    }
+      }
+    }, 150);
+
+    lastScrollTop.current = scrollTop;
   }, [autoScroll, onAutoScrollChange, onLoadMore, isLoadingMore, hasMoreLogs, logs.length]);
 
-  // Handle scroll position when logs change
+  // Handle new logs - only scroll if auto-scroll is enabled and user isn't actively scrolling
   useEffect(() => {
+    if (!containerRef.current) return;
+
     const container = containerRef.current;
-    if (!container) return;
+    const currentScrollHeight = container.scrollHeight;
 
-    const logCountChanged = logs.length !== lastLogCountRef.current;
-    const logCountIncreased = logs.length > lastLogCountRef.current;
-    const wasLoadingMore = wasLoadingMoreRef.current;
-
-    if (logCountChanged) {
-      if (wasLoadingMore && !isLoadingMore) {
-        // Just finished loading more logs - preserve scroll position
-        const heightDifference = container.scrollHeight - previousScrollHeightRef.current;
-        container.scrollTop = container.scrollTop + heightDifference;
-        wasLoadingMoreRef.current = false;
-      } else if (autoScroll && logCountIncreased && !wasLoadingMore) {
-        // New logs arrived (not from load-more) and auto-scroll is enabled
-        if (autoScrollTimeoutRef.current) {
-          clearTimeout(autoScrollTimeoutRef.current);
-        }
-        autoScrollTimeoutRef.current = setTimeout(() => {
-          scrollToBottom();
-        }, 10);
+    // If we're loading more logs (prepending), maintain scroll position
+    if (isLoadingMore && previousScrollHeight.current > 0) {
+      const heightDiff = currentScrollHeight - previousScrollHeight.current;
+      if (heightDiff > 0) {
+        container.scrollTop = lastScrollTop.current + heightDiff;
       }
     }
-
-    lastLogCountRef.current = logs.length;
-    previousScrollHeightRef.current = container.scrollHeight;
-  }, [logs.length, autoScroll, scrollToBottom, isLoadingMore]);
-
-  // Track loading state changes
-  useEffect(() => {
-    if (isLoadingMore && !wasLoadingMoreRef.current) {
-      // Started loading more logs - remember current scroll height
-      if (containerRef.current) {
-        previousScrollHeightRef.current = containerRef.current.scrollHeight;
-      }
-      wasLoadingMoreRef.current = true;
+    // If auto-scroll is enabled and user isn't scrolling, scroll to bottom
+    else if (autoScroll && !isUserScrolling) {
+      container.scrollTop = currentScrollHeight;
     }
-  }, [isLoadingMore]);
 
-  // Handle window resize
-  useEffect(() => {
-    const handleResize = () => {
-      if (autoScroll) {
-        setTimeout(scrollToBottom, 100);
-      }
-    };
+    previousScrollHeight.current = currentScrollHeight;
+  }, [logs, autoScroll, isUserScrolling, isLoadingMore]);
 
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [autoScroll, scrollToBottom]);
-
-  // Cleanup timeouts on unmount
+  // Cleanup
   useEffect(() => {
     return () => {
-      if (loadMoreTimeoutRef.current) {
-        clearTimeout(loadMoreTimeoutRef.current);
-      }
-      if (autoScrollTimeoutRef.current) {
-        clearTimeout(autoScrollTimeoutRef.current);
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
       }
     };
   }, []);
 
-  const handleScrollToBottom = () => {
-    scrollToBottom();
-    onAutoScrollChange(true);
-  };
+  const handleScrollToBottom = useCallback(() => {
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      onAutoScrollChange(true);
+    }
+  }, [onAutoScrollChange]);
 
   return (
     <div className="terminal-container">
@@ -197,12 +163,12 @@ export const LogContainer: React.FC<LogContainerProps> = ({
               </div>
             </div>
           ) : (
-            logs.map((log, index) => (
+            logs.map((log) => (
               <LogEntry
-                key={`${log.id}-${index}`}
+                key={log.id}
                 logEntry={log}
                 displayOptions={displayOptions}
-                isNew={false} // Remove the new animation for now to avoid confusion
+                isNew={false}
               />
             ))
           )}

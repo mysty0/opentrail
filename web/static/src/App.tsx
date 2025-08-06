@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ConnectionStatus } from './components/ConnectionStatus';
 import { FilterPanel } from './components/FilterPanel';
 import { DisplayPanel } from './components/DisplayPanel';
@@ -9,14 +9,21 @@ import { ApiService } from './services/api';
 import { DEFAULT_DISPLAY_OPTIONS, STORAGE_KEYS } from './utils/constants';
 import type { LogEntry, LogFilters, DisplayOptions } from './types';
 
+const MAX_RENDERED_LOGS = 500;
+const LOAD_BATCH_SIZE = 50;
+
 const App: React.FC = () => {
-  // State management
-  const [allLogs, setAllLogs] = useState<LogEntry[]>([]);
+  // State management - using a circular buffer approach
+  const [displayedLogs, setDisplayedLogs] = useState<LogEntry[]>([]);
   const [filters, setFilters] = useState<LogFilters>({});
   const [autoScroll, setAutoScroll] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMoreLogs, setHasMoreLogs] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Track the oldest log timestamp for pagination
+  const oldestLogTimestamp = useRef<string | null>(null);
+  const newestLogTimestamp = useRef<string | null>(null);
 
   
   // Persistent display options
@@ -28,14 +35,26 @@ const App: React.FC = () => {
   // API service
   const apiService = useMemo(() => ApiService.getInstance(), []);
 
-  // WebSocket connection
+  // WebSocket connection - optimized for performance
   const handleNewLogEntry = useCallback((logEntry: LogEntry) => {
-    setAllLogs(prev => {
-      // Insert new log in correct chronological position
-      const newLogs = [...prev, logEntry];
-      return newLogs.sort((a, b) => 
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-      );
+    setDisplayedLogs(prev => {
+      // Simply append new logs to the end (they should be newer)
+      const updated = [...prev, logEntry];
+      
+      // Update newest timestamp
+      newestLogTimestamp.current = logEntry.timestamp;
+      
+      // Trim to max size if needed (remove from beginning)
+      if (updated.length > MAX_RENDERED_LOGS) {
+        const trimmed = updated.slice(-MAX_RENDERED_LOGS);
+        // Update oldest timestamp after trimming
+        if (trimmed.length > 0) {
+          oldestLogTimestamp.current = trimmed[0].timestamp;
+        }
+        return trimmed;
+      }
+      
+      return updated;
     });
   }, []);
 
@@ -43,13 +62,13 @@ const App: React.FC = () => {
     onMessage: handleNewLogEntry
   });
 
-  // Filter logs based on current filters
+  // Filter logs based on current filters - optimized
   const filteredLogs = useMemo(() => {
     if (!filters || Object.keys(filters).length === 0) {
-      return allLogs;
+      return displayedLogs;
     }
 
-    return allLogs.filter(log => {
+    return displayedLogs.filter(log => {
       // Facility filter
       if (filters.facility !== null && filters.facility !== undefined && 
           log.facility !== filters.facility) {
@@ -100,20 +119,25 @@ const App: React.FC = () => {
 
       return true;
     });
-  }, [allLogs, filters]);
+  }, [displayedLogs, filters]);
 
   // Load initial logs
   useEffect(() => {
     const loadInitialLogs = async () => {
       try {
         setError(null);
-        const logs = await apiService.fetchLogs(50, 0);
-        // Sort logs by timestamp to ensure chronological order (oldest first)
-        const sortedLogs = logs.sort((a, b) => 
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-        );
-        setAllLogs(sortedLogs);
-        setHasMoreLogs(logs.length === 50);
+        const logs = await apiService.fetchLogs(LOAD_BATCH_SIZE, 0);
+        
+        if (logs.length > 0) {
+          // Logs should already be sorted by the API (newest first)
+          setDisplayedLogs(logs);
+          
+          // Track timestamps for pagination
+          oldestLogTimestamp.current = logs[logs.length - 1].timestamp;
+          newestLogTimestamp.current = logs[0].timestamp;
+          
+          setHasMoreLogs(logs.length === LOAD_BATCH_SIZE);
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Failed to load initial logs';
         console.error('Failed to load initial logs:', errorMessage);
@@ -124,29 +148,38 @@ const App: React.FC = () => {
     loadInitialLogs();
   }, [apiService]);
 
-  // Load more logs
+  // Load more logs (older logs when scrolling up)
   const handleLoadMore = useCallback(async () => {
-    if (isLoadingMore || !hasMoreLogs) return;
+    if (isLoadingMore || !hasMoreLogs || !oldestLogTimestamp.current) return;
 
     setIsLoadingMore(true);
     try {
-      const moreLogs = await apiService.fetchLogs(50, allLogs.length);
+      // Fetch older logs using timestamp-based pagination
+      const moreLogs = await apiService.fetchLogsBefore(oldestLogTimestamp.current, LOAD_BATCH_SIZE);
       
       if (moreLogs.length > 0) {
-        // Sort the new logs by timestamp
-        const sortedMoreLogs = moreLogs.sort((a, b) => 
-          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-        );
-        
-        setAllLogs(prev => {
-          // Combine all logs and sort them properly
-          const combined = [...sortedMoreLogs, ...prev];
-          return combined.sort((a, b) => 
-            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-          );
+        setDisplayedLogs(prev => {
+          // Prepend older logs to the beginning
+          const combined = [...moreLogs, ...prev];
+          
+          // Trim from the end if we exceed max size
+          const trimmed = combined.length > MAX_RENDERED_LOGS 
+            ? combined.slice(0, MAX_RENDERED_LOGS)
+            : combined;
+          
+          // Update timestamps
+          if (trimmed.length > 0) {
+            oldestLogTimestamp.current = trimmed[0].timestamp;
+            if (trimmed.length < combined.length) {
+              // We trimmed some logs from the end, update newest timestamp
+              newestLogTimestamp.current = trimmed[trimmed.length - 1].timestamp;
+            }
+          }
+          
+          return trimmed;
         });
         
-        setHasMoreLogs(moreLogs.length === 50);
+        setHasMoreLogs(moreLogs.length === LOAD_BATCH_SIZE);
       } else {
         setHasMoreLogs(false);
       }
@@ -158,7 +191,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoadingMore(false);
     }
-  }, [apiService, allLogs.length, isLoadingMore, hasMoreLogs]);
+  }, [apiService, isLoadingMore, hasMoreLogs]);
 
   // Filter handlers
   const handleApplyFilters = useCallback(() => {
