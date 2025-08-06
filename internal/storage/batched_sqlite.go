@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"opentrail/internal/interfaces"
+	"opentrail/internal/metrics"
 	"opentrail/internal/types"
 
 	_ "modernc.org/sqlite"
@@ -39,6 +40,9 @@ type BatchedSQLiteStorage struct {
 	// Prepared statements for batch operations
 	insertStmt *sql.Stmt
 	batchStmt  *sql.Stmt
+
+	// Metrics
+	metrics *metrics.StorageMetrics
 }
 
 // NewBatchedSQLiteStorage creates a new batched SQLite storage instance
@@ -67,6 +71,7 @@ func NewBatchedSQLiteStorage(dbPath string, config BatchConfig) (interfaces.LogS
 		ctx:         ctx,
 		cancel:      cancel,
 		isRunning:   false,
+		metrics:     metrics.GetStorageMetrics(),
 	}
 
 	// Configure WAL mode if enabled
@@ -362,8 +367,18 @@ func (s *BatchedSQLiteStorage) processBatch() {
 		return
 	}
 
+	// Record batch metrics
+	batchStart := time.Now()
+	batchSize := len(requests)
+
+	// Update buffer size metric
+	s.metrics.UpdateBatchBufferSize(0) // Buffer is now empty
+
 	// Process the batch of requests with actual database operations
 	s.processBatchRequests(requests)
+
+	// Record batch processing completion
+	s.metrics.RecordBatchProcessed(batchSize, time.Since(batchStart))
 }
 
 // processBatchRequests handles the actual processing of a batch of requests
@@ -389,6 +404,8 @@ func (s *BatchedSQLiteStorage) processBatchRequests(requests []*writeRequest) {
 
 // executeBatchWrite performs a batch database write operation within a transaction
 func (s *BatchedSQLiteStorage) executeBatchWrite(requests []*writeRequest) error {
+	txStart := time.Now()
+
 	// Begin transaction for batch write
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -476,6 +493,9 @@ func (s *BatchedSQLiteStorage) executeBatchWrite(requests []*writeRequest) error
 		s.retryIndividualWrites(allRequests, err)
 		return fmt.Errorf("transaction commit failed: %w", err)
 	}
+
+	// Record successful transaction
+	s.metrics.RecordDatabaseTransaction(time.Since(txStart))
 
 	// Assign IDs to successful writes
 	for _, write := range successfulWrites {
@@ -581,13 +601,22 @@ func (s *BatchedSQLiteStorage) cleanup() {
 
 // Store saves a log entry to the database (non-blocking)
 func (s *BatchedSQLiteStorage) Store(entry *types.LogEntry) error {
+	start := time.Now()
+
 	// Check if storage is running
 	s.runningMux.RLock()
 	if !s.isRunning {
 		s.runningMux.RUnlock()
-		return fmt.Errorf("storage is not running")
+		err := fmt.Errorf("storage is not running")
+		s.metrics.RecordWriteRequest(time.Since(start), err)
+		return err
 	}
 	s.runningMux.RUnlock()
+
+	// Update queue utilization metrics
+	queueLen := len(s.writeQueue)
+	s.metrics.UpdateQueueUtilization(queueLen, s.config.QueueSize)
+	s.metrics.UpdateBatchQueueSize(queueLen)
 
 	// Create write request with context
 	ctx, cancel := context.WithTimeout(s.ctx, s.config.WriteTimeout)
@@ -603,7 +632,13 @@ func (s *BatchedSQLiteStorage) Store(entry *types.LogEntry) error {
 		// If not, we timeout but write is still queued (fire-and-forget for performance)
 		timeout := s.config.BatchTimeout + 20*time.Millisecond
 
+		queueStart := time.Now()
 		id, err := req.waitForResult(timeout)
+		s.metrics.RecordQueueWaitTime(time.Since(queueStart))
+
+		duration := time.Since(start)
+		s.metrics.RecordWriteRequest(duration, err)
+
 		if err != nil {
 			// Timeout or error - but write is still queued, so return success
 			// Set placeholder ID for compatibility
@@ -617,12 +652,20 @@ func (s *BatchedSQLiteStorage) Store(entry *types.LogEntry) error {
 
 	default:
 		// Queue is full, apply backpressure
-		return fmt.Errorf("write queue is full, please try again later")
+		err := fmt.Errorf("write queue is full, please try again later")
+		s.metrics.RecordQueueFullError()
+		s.metrics.RecordWriteRequest(time.Since(start), err)
+		return err
 	}
 }
 
 // Search retrieves log entries based on the provided query
 func (s *BatchedSQLiteStorage) Search(query types.SearchQuery) ([]*types.LogEntry, error) {
+	start := time.Now()
+	var err error
+	defer func() {
+		s.metrics.RecordReadRequest(time.Since(start), err)
+	}()
 	var conditions []string
 	var args []interface{}
 
@@ -712,9 +755,10 @@ func (s *BatchedSQLiteStorage) Search(query types.SearchQuery) ([]*types.LogEntr
 		args = append(args, query.Offset)
 	}
 
-	rows, err := s.db.Query(baseQuery, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute search query: %w", err)
+	rows, queryErr := s.db.Query(baseQuery, args...)
+	if queryErr != nil {
+		err = fmt.Errorf("failed to execute search query: %w", queryErr)
+		return nil, err
 	}
 	defer rows.Close()
 

@@ -13,9 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"opentrail/internal/interfaces"
 	"opentrail/internal/types"
+
+	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // HTTPServer implements an HTTP server for the web UI and REST API
@@ -23,21 +25,21 @@ type HTTPServer struct {
 	config     *types.Config
 	logService interfaces.LogService
 	server     *http.Server
-	
+
 	// WebSocket upgrader
-	upgrader   websocket.Upgrader
-	
+	upgrader websocket.Upgrader
+
 	// Static files (embedded or filesystem)
 	staticFS    fs.FS
 	useEmbedded bool
-	
+
 	// Server lifecycle
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	isRunning  bool
 	runningMux sync.RWMutex
-	
+
 	// Statistics
 	stats      HTTPServerStats
 	statsMutex sync.RWMutex
@@ -45,11 +47,11 @@ type HTTPServer struct {
 
 // HTTPServerStats represents statistics about the HTTP server
 type HTTPServerStats struct {
-	RequestsHandled     int64 `json:"requests_handled"`
-	RequestErrors       int64 `json:"request_errors"`
+	RequestsHandled      int64 `json:"requests_handled"`
+	RequestErrors        int64 `json:"request_errors"`
 	WebSocketConnections int64 `json:"websocket_connections"`
-	ActiveWebSockets    int64 `json:"active_websockets"`
-	IsRunning           bool  `json:"is_running"`
+	ActiveWebSockets     int64 `json:"active_websockets"`
+	IsRunning            bool  `json:"is_running"`
 }
 
 // APIResponse represents a standard API response structure
@@ -70,7 +72,7 @@ type HealthResponse struct {
 // NewHTTPServer creates a new HTTP server instance
 func NewHTTPServer(config *types.Config, logService interfaces.LogService) *HTTPServer {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Configure WebSocket upgrader
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  1024,
@@ -80,7 +82,7 @@ func NewHTTPServer(config *types.Config, logService interfaces.LogService) *HTTP
 			return true
 		},
 	}
-	
+
 	return &HTTPServer{
 		config:      config,
 		logService:  logService,
@@ -106,15 +108,15 @@ func NewHTTPServerWithStaticFiles(config *types.Config, logService interfaces.Lo
 func (s *HTTPServer) Start() error {
 	s.runningMux.Lock()
 	defer s.runningMux.Unlock()
-	
+
 	if s.isRunning {
 		return fmt.Errorf("HTTP server is already running")
 	}
-	
+
 	// Create HTTP server with routes
 	mux := http.NewServeMux()
 	s.setupRoutes(mux)
-	
+
 	s.server = &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.config.HTTPPort),
 		Handler:      mux,
@@ -122,25 +124,25 @@ func (s *HTTPServer) Start() error {
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
-	
+
 	s.isRunning = true
-	
+
 	// Update stats
 	s.updateStats(func(stats *HTTPServerStats) {
 		stats.IsRunning = true
 	})
-	
+
 	// Start server in goroutine
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		
+
 		log.Printf("HTTP server starting on port %d", s.config.HTTPPort)
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("HTTP server error: %v", err)
 		}
 	}()
-	
+
 	return nil
 }
 
@@ -148,33 +150,33 @@ func (s *HTTPServer) Start() error {
 func (s *HTTPServer) Stop() error {
 	s.runningMux.Lock()
 	defer s.runningMux.Unlock()
-	
+
 	if !s.isRunning {
 		return nil
 	}
-	
+
 	// Cancel context to signal shutdown
 	s.cancel()
-	
+
 	// Shutdown server with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
-	
+
 	if err := s.server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("HTTP server shutdown error: %v", err)
 		return err
 	}
-	
+
 	// Wait for all goroutines to finish
 	s.wg.Wait()
-	
+
 	s.isRunning = false
-	
+
 	// Update stats
 	s.updateStats(func(stats *HTTPServerStats) {
 		stats.IsRunning = false
 	})
-	
+
 	log.Printf("HTTP server stopped")
 	return nil
 }
@@ -192,7 +194,10 @@ func (s *HTTPServer) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/logs", s.authMiddleware(s.handleLogs))
 	mux.HandleFunc("/api/logs/stream", s.authMiddleware(s.handleLogsStream))
-	
+
+	// Metrics endpoint for Prometheus
+	mux.Handle("/metrics", promhttp.Handler())
+
 	// Static file serving
 	mux.HandleFunc("/", s.authMiddleware(s.handleIndex))
 	mux.HandleFunc("/static/", s.handleStatic)
@@ -206,28 +211,28 @@ func (s *HTTPServer) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
-		
+
 		// Get credentials from request
 		username, password, ok := r.BasicAuth()
 		if !ok {
 			s.sendUnauthorized(w)
 			return
 		}
-		
+
 		// Validate credentials with timing attack protection
 		validUsername := s.config.AuthUsername
 		validPassword := s.config.AuthPassword
-		
+
 		// Use constant-time comparison to prevent timing attacks
 		// Always compare the same amount of data regardless of input length
 		usernameMatch := s.constantTimeCompare(username, validUsername)
 		passwordMatch := s.constantTimeCompare(password, validPassword)
-		
+
 		if !usernameMatch || !passwordMatch {
 			s.sendUnauthorized(w)
 			return
 		}
-		
+
 		// Authentication successful, proceed to handler
 		next(w, r)
 	}
@@ -238,13 +243,13 @@ func (s *HTTPServer) constantTimeCompare(a, b string) bool {
 	// Convert strings to byte slices for comparison
 	aBytes := []byte(a)
 	bBytes := []byte(b)
-	
+
 	// Determine the maximum length to compare
 	maxLen := len(aBytes)
 	if len(bBytes) > maxLen {
 		maxLen = len(bBytes)
 	}
-	
+
 	// Pad shorter slice with zeros to ensure constant-time comparison
 	if len(aBytes) < maxLen {
 		padded := make([]byte, maxLen)
@@ -256,16 +261,16 @@ func (s *HTTPServer) constantTimeCompare(a, b string) bool {
 		copy(padded, bBytes)
 		bBytes = padded
 	}
-	
+
 	// Perform constant-time comparison
 	result := byte(0)
 	for i := 0; i < maxLen; i++ {
 		result |= aBytes[i] ^ bBytes[i]
 	}
-	
+
 	// Also check that the original lengths match
 	lengthMatch := len(a) == len(b)
-	
+
 	return result == 0 && lengthMatch
 }
 
@@ -280,15 +285,15 @@ func (s *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.updateStats(func(stats *HTTPServerStats) {
 		stats.RequestsHandled++
 	})
-	
+
 	if r.Method != http.MethodGet {
 		s.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	
+
 	// Get service stats
 	serviceStats := s.logService.GetStats()
-	
+
 	response := HealthResponse{
 		Status:    "healthy",
 		Timestamp: time.Now(),
@@ -298,7 +303,7 @@ func (s *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"http_server": s.GetStats(),
 		},
 	}
-	
+
 	s.sendJSONResponse(w, http.StatusOK, response)
 }
 
@@ -307,19 +312,19 @@ func (s *HTTPServer) handleLogs(w http.ResponseWriter, r *http.Request) {
 	s.updateStats(func(stats *HTTPServerStats) {
 		stats.RequestsHandled++
 	})
-	
+
 	if r.Method != http.MethodGet {
 		s.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	
+
 	// Parse query parameters
 	query, err := s.parseSearchQuery(r)
 	if err != nil {
 		s.sendErrorResponse(w, http.StatusBadRequest, fmt.Sprintf("Invalid query parameters: %v", err))
 		return
 	}
-	
+
 	// Execute search
 	logs, err := s.logService.Search(query)
 	if err != nil {
@@ -327,7 +332,7 @@ func (s *HTTPServer) handleLogs(w http.ResponseWriter, r *http.Request) {
 		s.sendErrorResponse(w, http.StatusInternalServerError, "Failed to search logs")
 		return
 	}
-	
+
 	// Return results
 	s.sendJSONResponse(w, http.StatusOK, APIResponse{
 		Success: true,
@@ -340,12 +345,12 @@ func (s *HTTPServer) parseSearchQuery(r *http.Request) (types.SearchQuery, error
 	query := types.SearchQuery{
 		Limit: 100, // Default limit
 	}
-	
+
 	// Parse text search
 	if text := r.URL.Query().Get("text"); text != "" {
 		query.Text = text
 	}
-	
+
 	// Parse facility filter
 	if facilityStr := r.URL.Query().Get("facility"); facilityStr != "" {
 		facility, err := strconv.Atoi(facilityStr)
@@ -354,7 +359,7 @@ func (s *HTTPServer) parseSearchQuery(r *http.Request) (types.SearchQuery, error
 		}
 		query.Facility = &facility
 	}
-	
+
 	// Parse severity filter
 	if severityStr := r.URL.Query().Get("severity"); severityStr != "" {
 		severity, err := strconv.Atoi(severityStr)
@@ -363,7 +368,7 @@ func (s *HTTPServer) parseSearchQuery(r *http.Request) (types.SearchQuery, error
 		}
 		query.Severity = &severity
 	}
-	
+
 	// Parse min severity filter
 	if minSeverityStr := r.URL.Query().Get("min_severity"); minSeverityStr != "" {
 		minSeverity, err := strconv.Atoi(minSeverityStr)
@@ -372,32 +377,32 @@ func (s *HTTPServer) parseSearchQuery(r *http.Request) (types.SearchQuery, error
 		}
 		query.MinSeverity = &minSeverity
 	}
-	
+
 	// Parse hostname filter
 	if hostname := r.URL.Query().Get("hostname"); hostname != "" {
 		query.Hostname = hostname
 	}
-	
+
 	// Parse app name filter
 	if appName := r.URL.Query().Get("app_name"); appName != "" {
 		query.AppName = appName
 	}
-	
+
 	// Parse proc ID filter
 	if procID := r.URL.Query().Get("proc_id"); procID != "" {
 		query.ProcID = procID
 	}
-	
+
 	// Parse msg ID filter
 	if msgID := r.URL.Query().Get("msg_id"); msgID != "" {
 		query.MsgID = msgID
 	}
-	
+
 	// Parse structured data query
 	if structuredDataQuery := r.URL.Query().Get("structured_data_query"); structuredDataQuery != "" {
 		query.StructuredDataQuery = structuredDataQuery
 	}
-	
+
 	// Parse start time
 	if startTimeStr := r.URL.Query().Get("start_time"); startTimeStr != "" {
 		startTime, err := time.Parse(time.RFC3339, startTimeStr)
@@ -406,7 +411,7 @@ func (s *HTTPServer) parseSearchQuery(r *http.Request) (types.SearchQuery, error
 		}
 		query.StartTime = &startTime
 	}
-	
+
 	// Parse end time
 	if endTimeStr := r.URL.Query().Get("end_time"); endTimeStr != "" {
 		endTime, err := time.Parse(time.RFC3339, endTimeStr)
@@ -415,7 +420,7 @@ func (s *HTTPServer) parseSearchQuery(r *http.Request) (types.SearchQuery, error
 		}
 		query.EndTime = &endTime
 	}
-	
+
 	// Parse limit
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		limit, err := strconv.Atoi(limitStr)
@@ -424,7 +429,7 @@ func (s *HTTPServer) parseSearchQuery(r *http.Request) (types.SearchQuery, error
 		}
 		query.Limit = limit
 	}
-	
+
 	// Parse offset
 	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
 		offset, err := strconv.Atoi(offsetStr)
@@ -433,7 +438,7 @@ func (s *HTTPServer) parseSearchQuery(r *http.Request) (types.SearchQuery, error
 		}
 		query.Offset = offset
 	}
-	
+
 	return query, nil
 }
 
@@ -441,7 +446,7 @@ func (s *HTTPServer) parseSearchQuery(r *http.Request) (types.SearchQuery, error
 func (s *HTTPServer) sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	
+
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		log.Printf("Error encoding JSON response: %v", err)
 		s.updateStats(func(stats *HTTPServerStats) {
@@ -455,12 +460,12 @@ func (s *HTTPServer) sendErrorResponse(w http.ResponseWriter, statusCode int, me
 	s.updateStats(func(stats *HTTPServerStats) {
 		stats.RequestErrors++
 	})
-	
+
 	response := APIResponse{
 		Success: false,
 		Error:   message,
 	}
-	
+
 	s.sendJSONResponse(w, statusCode, response)
 }
 
@@ -469,13 +474,13 @@ func (s *HTTPServer) handleLogsStream(w http.ResponseWriter, r *http.Request) {
 	s.updateStats(func(stats *HTTPServerStats) {
 		stats.RequestsHandled++
 	})
-	
+
 	// Only allow GET requests for WebSocket upgrade
 	if r.Method != http.MethodGet {
 		s.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	
+
 	// Upgrade HTTP connection to WebSocket
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -485,13 +490,13 @@ func (s *HTTPServer) handleLogsStream(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	
+
 	// Update connection statistics
 	s.updateStats(func(stats *HTTPServerStats) {
 		stats.WebSocketConnections++
 		stats.ActiveWebSockets++
 	})
-	
+
 	// Handle the WebSocket connection
 	s.handleWebSocketConnection(conn)
 }
@@ -504,34 +509,34 @@ func (s *HTTPServer) handleWebSocketConnection(conn *websocket.Conn) {
 			stats.ActiveWebSockets--
 		})
 	}()
-	
+
 	// Set connection timeouts
 	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
-	
+
 	// Subscribe to log updates
 	subscription := s.logService.Subscribe()
 	defer s.logService.Unsubscribe(subscription)
-	
+
 	// Create context for this connection
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
-	
+
 	// Start ping ticker to keep connection alive
 	pingTicker := time.NewTicker(30 * time.Second)
 	defer pingTicker.Stop()
-	
+
 	// Handle connection in separate goroutines
 	s.wg.Add(2)
-	
+
 	// Goroutine to handle incoming messages (for connection keep-alive)
 	go func() {
 		defer s.wg.Done()
 		defer cancel()
-		
+
 		for {
 			// Read message to detect client disconnection
 			_, _, err := conn.ReadMessage()
@@ -543,12 +548,12 @@ func (s *HTTPServer) handleWebSocketConnection(conn *websocket.Conn) {
 			}
 		}
 	}()
-	
+
 	// Goroutine to handle outgoing messages and pings
 	go func() {
 		defer s.wg.Done()
 		defer cancel()
-		
+
 		for {
 			select {
 			case logEntry, ok := <-subscription:
@@ -556,14 +561,14 @@ func (s *HTTPServer) handleWebSocketConnection(conn *websocket.Conn) {
 					// Subscription channel closed
 					return
 				}
-				
+
 				// Send log entry to client
 				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				if err := conn.WriteJSON(logEntry); err != nil {
 					log.Printf("WebSocket write error: %v", err)
 					return
 				}
-				
+
 			case <-pingTicker.C:
 				// Send ping to keep connection alive
 				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -571,14 +576,14 @@ func (s *HTTPServer) handleWebSocketConnection(conn *websocket.Conn) {
 					log.Printf("WebSocket ping error: %v", err)
 					return
 				}
-				
+
 			case <-ctx.Done():
 				// Connection context cancelled or server shutting down
 				return
 			}
 		}
 	}()
-	
+
 	// Wait for either goroutine to finish
 	<-ctx.Done()
 }
@@ -601,18 +606,18 @@ func (s *HTTPServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	s.updateStats(func(stats *HTTPServerStats) {
 		stats.RequestsHandled++
 	})
-	
+
 	if r.Method != http.MethodGet {
 		s.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	
+
 	// Only serve index for root path
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
-	
+
 	// Serve the index.html file
 	if s.useEmbedded {
 		s.serveEmbeddedFile(w, r, "index.html")
@@ -627,19 +632,19 @@ func (s *HTTPServer) handleStatic(w http.ResponseWriter, r *http.Request) {
 	s.updateStats(func(stats *HTTPServerStats) {
 		stats.RequestsHandled++
 	})
-	
+
 	if r.Method != http.MethodGet {
 		s.sendErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	
+
 	// Remove /static/ prefix and serve from web/static/
 	path := r.URL.Path[len("/static/"):]
 	if path == "" {
 		http.NotFound(w, r)
 		return
 	}
-	
+
 	// Set appropriate content type
 	switch {
 	case strings.HasSuffix(path, ".css"):
@@ -649,7 +654,7 @@ func (s *HTTPServer) handleStatic(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, ".html"):
 		w.Header().Set("Content-Type", "text/html")
 	}
-	
+
 	// Serve the file
 	if s.useEmbedded {
 		s.serveEmbeddedFile(w, r, path)
@@ -668,10 +673,10 @@ func (s *HTTPServer) serveEmbeddedFile(w http.ResponseWriter, r *http.Request, f
 		http.NotFound(w, r)
 		return
 	}
-	
+
 	// Set cache headers for static assets
 	w.Header().Set("Cache-Control", "public, max-age=3600")
-	
+
 	// Write the file content
 	w.Write(data)
 }
@@ -680,17 +685,17 @@ func (s *HTTPServer) serveEmbeddedFile(w http.ResponseWriter, r *http.Request, f
 func (s *HTTPServer) getStaticFilePath(filename string) string {
 	// Try different possible paths for static files
 	possiblePaths := []string{
-		"web/static/" + filename,           // From project root
-		"../../web/static/" + filename,     // From internal/server during tests
+		"web/static/" + filename,          // From project root
+		"../../web/static/" + filename,    // From internal/server during tests
 		"../../../web/static/" + filename, // From deeper nested directories
 	}
-	
+
 	for _, path := range possiblePaths {
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
 	}
-	
+
 	// Default to the standard path if none found
 	return "web/static/" + filename
 }

@@ -115,10 +115,16 @@ func NewApplication() (*Application, error) {
 
 // initializeComponents initializes all application components
 func (app *Application) initializeComponents() error {
-	// Initialize storage
-	sqliteStorage, err := storage.NewSQLiteStorage(app.config.DatabasePath)
+	// Initialize storage with batching optimization
+	batchConfig := storage.DefaultBatchConfig()
+	// Optimize for production use
+	batchConfig.BatchSize = 100
+	batchConfig.BatchTimeout = 50 * time.Millisecond
+	batchConfig.QueueSize = 10000
+
+	sqliteStorage, err := storage.NewBatchedSQLiteStorage(app.config.DatabasePath, batchConfig)
 	if err != nil {
-		return fmt.Errorf("failed to initialize storage: %w", err)
+		return fmt.Errorf("failed to initialize batched storage: %w", err)
 	}
 	app.storage = sqliteStorage
 
